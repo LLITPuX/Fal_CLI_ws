@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  gemini-cli-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gemini-cli-api
+    env_file:
+      - .env
+    environment:
+      - GEMINI_CLI
+      - GEMINI_MODEL
+      - NON_INTERACTIVE=true
+      - GOOGLE_CLOUD_PROJECT
+      # Note: Current working models are gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-light
+    volumes:
+      - ${HOST_GEMINI_DIR}:/host_gemini:ro
+      - ./app:/app
+    working_dir: /app
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    command: [ "uvicorn", "app.main_cli:app", "--host", "0.0.0.0", "--port", "8000" ]
+
+

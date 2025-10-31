@@ -1,0 +1,278 @@
+# Trigger Node CLI Module Pattern
+
+## Overview
+FastAPI service that wraps external CLI tools in async Docker containers with credential mounting and JSON schema validation.
+
+## Architecture Pattern
+
+```
+Frontend → FastAPI → CLI (subprocess) → External Service → Validated JSON Response
+```
+
+## Core Components
+
+### 1. Docker Setup
+
+**Dockerfile:**
+- Base: `python:3.12-slim`
+- Install system deps: `nodejs`, `npm`, CLI tool
+- Create non-root user `app`
+- Install Python deps: `fastapi`, `uvicorn`, `pydantic`
+- Add entrypoint for credential staging
+
+**docker-compose.yml:**
+```yaml
+services:
+  service-name:
+    build: .
+    env_file: .env
+    environment:
+      - CLI_BINARY
+      - CLI_MODEL
+      - API_KEY_VAR
+    volumes:
+      - ${HOST_CREDS_DIR}:/host_creds:ro
+      - ./app:/app
+    ports:
+      - "${API_PORT:-8000}:8000"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**entrypoint.sh:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Copy credentials from mounted host directory
+cp -a /host_creds/. /home/app/.credentials/ || true
+
+# Fix ownership
+chown -R app:app /home/app/.credentials
+
+# Add user bins to PATH
+export PATH="/home/app/.local/bin:$PATH"
+
+exec "$@"
+```
+
+### 2. FastAPI Application
+
+**app/main.py structure:**
+
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+import asyncio
+import json
+
+app = FastAPI(title="CLI Service")
+
+# Request/Response models
+class InputRequest(BaseModel):
+    text: str
+    # Optional overrides
+    model: str | None = None
+
+class OutputData(BaseModel):
+    # Strict schema matching CLI output
+    field1: str = Field(..., description="...")
+    field2: list[str] = Field(default_factory=list)
+
+class OutputResponse(BaseModel):
+    id: str
+    json_path: str
+    data: OutputData
+
+# Health check
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+# Main endpoint
+@app.post("/process", response_model=OutputResponse)
+async def process_text(req: InputRequest) -> OutputResponse:
+    command = os.getenv("CLI_BINARY", "default-cli")
+    model = req.model or os.getenv("CLI_MODEL", "default-model")
+    
+    # Build CLI command
+    args = [command, "--model", model, "--output-format", "json", "--prompt", build_prompt(req.text)]
+    
+    # Execute async
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
+    
+    if proc.returncode != 0:
+        raise HTTPException(status_code=502, detail=f"CLI error: {stderr.decode()}")
+    
+    # Parse and validate
+    raw = stdout.decode("utf-8")
+    data = parse_cli_output(raw)
+    validated = OutputData(**data)
+    
+    # Save to file
+    file_id = uuid.uuid4().hex
+    json_path = Path("data") / f"{file_id}.json"
+    json_path.parent.mkdir(exist_ok=True)
+    json_path.write_text(json.dumps(validated.model_dump(), ensure_ascii=False, indent=2))
+    
+    return OutputResponse(id=file_id, json_path=str(json_path), data=validated)
+```
+
+### 3. JSON Parsing Pattern
+
+```python
+def parse_cli_output(raw: str) -> dict:
+    # Unwrap if CLI returns {"response": "..."}
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict) and "response" in parsed:
+            raw = parsed["response"]
+    except json.JSONDecodeError:
+        pass
+    
+    # Strip markdown code blocks
+    if "```json" in raw:
+        start = raw.find("```json") + 7
+        end = raw.find("```", start)
+        raw = raw[start:end].strip()
+    
+    # Extract JSON object
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1:
+        raise HTTPException(status_code=502, detail=f"Invalid JSON: {raw[:500]}")
+    
+    return json.loads(raw[start:end+1])
+```
+
+### 4. Environment Variables
+
+**env.example:**
+```ini
+# Host credentials path
+HOST_CREDS_DIR=C:\Users\<User>\.credentials
+
+# CLI configuration
+CLI_BINARY=cli-tool-name
+CLI_MODEL=default-model-name
+
+# API keys (if needed)
+API_KEY=your-api-key
+PROJECT_ID=your-project-id
+
+# Service port
+API_PORT=8000
+```
+
+### 5. Requirements
+
+**app/requirements.txt:**
+```
+fastapi==0.115.5
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+```
+
+## Key Principles
+
+1. **Async-First**: All I/O через `asyncio.subprocess`
+2. **Schema Validation**: Pydantic models з Field descriptions
+3. **Timeout Handling**: `asyncio.wait_for()` на всіх CLI викликах
+4. **Error Context**: Повертай перші 500 символів виводу при помилках
+5. **Credential Isolation**: Монтуй read-only, копіюй в entrypoint
+6. **Non-Interactive Mode**: Завжди використовуй CLI флаги для batch-режиму
+7. **JSON Extraction**: Обробляй обгортки і markdown blocks
+8. **Atomic Writes**: Пиши у `.tmp`, потім `rename()`
+
+## Typical File Structure
+
+```
+module-name/
+├── .cursor/
+│   └── rules/
+│       └── trigger_node_cli.mdc
+├── docker-compose.yml
+├── Dockerfile
+├── entrypoint.sh
+├── env.example
+├── README.md
+└── app/
+    ├── requirements.txt
+    └── app/
+        └── main.py
+```
+
+## Common CLI Flags Patterns
+
+- **Gemini CLI**: `--model`, `--output-format json`, `--prompt`
+- **OpenAI CLI**: `--model`, `--format json`, `-`
+- **Anthropic CLI**: `--model`, `--json`, `--prompt`
+
+## Health Check Pattern
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+```
+
+## Testing Commands
+
+```powershell
+# Build and start
+docker compose build --no-cache
+docker compose up -d
+
+# Health check
+curl http://localhost:8000/health
+
+# Test endpoint
+$body = '{"text":"test input"}' 
+Invoke-RestMethod -Uri http://localhost:8000/process -Method Post -ContentType "application/json" -Body $body
+
+# View logs
+docker compose logs -f service-name
+
+# Restart after code changes
+docker compose restart service-name
+```
+
+## Common Pitfalls
+
+❌ **Avoid:**
+- Hardcoding credentials in code/images
+- Blocking I/O calls (use async)
+- Missing timeout on subprocess
+- Не валідувати JSON schema
+- Ігнорувати stderr при помилках
+
+✅ **Do:**
+- Mount credentials as volumes
+- Use `asyncio.create_subprocess_exec()`
+- Set timeouts (90s for AI calls)
+- Validate with Pydantic before save
+- Log first 500 chars of error output
+
+## Quick Start Template
+
+Use this command to scaffold a new module:
+```powershell
+# Copy structure
+Copy-Item "Gemini CLI" "New CLI Module" -Recurse
+
+# Update names in files
+# - docker-compose.yml: service name, container name
+# - README.md: title, description
+# - env.example: variables
+# - app/main.py: app title, endpoints
+```
+
+## References
+
+See `Gemini CLI/` directory for complete working example.
