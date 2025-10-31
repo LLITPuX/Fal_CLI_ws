@@ -1,0 +1,328 @@
+---
+description: Windows and PowerShell specific guidelines
+alwaysApply: false
+---
+# WINDOWS DEVELOPMENT GUIDELINES
+
+## PowerShell Commands
+
+### File and Directory Operations
+```powershell
+# Create directories (recursively)
+New-Item -ItemType Directory -Force -Path backend\app\api
+
+# Create multiple directories
+New-Item -ItemType Directory -Force -Path backend\app\api, backend\app\core, backend\app\models
+
+# Copy files
+Copy-Item -Path source.txt -Destination dest.txt
+
+# Copy directories recursively
+Copy-Item -Path source\ -Destination dest\ -Recurse
+
+# Remove files
+Remove-Item -Force file.txt
+
+# Remove directories recursively
+Remove-Item -Recurse -Force directory\
+
+# List directory contents
+Get-ChildItem -Path .
+Get-ChildItem -Path . -Recurse  # Recursive
+
+# Check if path exists
+Test-Path "C:\path\to\file"
+```
+
+**Rule:** NEVER use Linux commands (mkdir, cp, rm, ls) in PowerShell context.
+
+### Working with Environment Variables
+```powershell
+# Read environment variable
+$env:PATH
+$env:GOOGLE_CLOUD_PROJECT
+
+# Set environment variable (current session only)
+$env:API_PORT = "9000"
+
+# Set permanently (requires admin)
+[Environment]::SetEnvironmentVariable("VAR_NAME", "value", "User")
+
+# Remove environment variable
+Remove-Item Env:\VAR_NAME
+
+# List all environment variables
+Get-ChildItem Env:
+```
+
+## Path Handling
+
+### Always use backslashes for Windows paths
+```powershell
+# GOOD: Windows style
+$projectPath = "D:\Development\Projects\backend"
+$configPath = "$projectPath\config\settings.json"
+
+# ACCEPTABLE: Forward slashes work in some contexts
+$webPath = "C:/Users/Username/project"
+
+# GOOD: Use Join-Path for cross-platform compatibility
+$fullPath = Join-Path -Path $projectPath -ChildPath "app\main.py"
+```
+
+### Path normalization
+```powershell
+# Convert to absolute path
+$absolutePath = Resolve-Path ".\backend"
+
+# Get current directory
+$currentDir = Get-Location
+# Or
+$currentDir = $PWD
+```
+
+**Rule:** Use `Join-Path` for building paths programmatically.
+
+## Docker on Windows
+
+### Volume mounting syntax
+```yaml
+# docker-compose.yml
+services:
+  backend:
+    volumes:
+      # Absolute Windows path
+      - C:\Users\Username\.gemini:/host_gemini:ro
+      
+      # With environment variable (RECOMMENDED)
+      - ${HOST_GEMINI_DIR}:/host_gemini:ro
+      
+      # Relative path (works from project root)
+      - .\backend\app:/app/app
+```
+
+### PowerShell with Docker Compose
+```powershell
+# Build services
+docker compose build
+
+# Start services in background
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Stop services
+docker compose down
+
+# Remove volumes too
+docker compose down -v
+```
+
+**Rule:** Use environment variables for absolute paths in docker-compose.yml.
+
+## WSL2 Considerations
+
+### Line Endings Issue
+Problem: Shell scripts with CRLF line endings fail in Linux containers.
+
+Solution: Configure Git to use LF for shell scripts.
+
+**Create `.gitattributes` in project root:**
+```
+# .gitattributes
+*.sh text eol=lf
+*.bash text eol=lf
+entrypoint.sh text eol=lf
+docker-entrypoint.sh text eol=lf
+
+# Python files
+*.py text eol=lf
+
+# Config files
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+```
+
+### Docker Desktop with WSL2
+```powershell
+# Check WSL version
+wsl --list --verbose
+
+# Docker uses WSL2 backend by default
+# Performance: Use Linux filesystem for better performance
+# Location: \\wsl$\Ubuntu\home\username\projects
+```
+
+**Rule:** Store code in WSL2 filesystem for better Docker performance.
+
+## Text Encoding
+
+### UTF-8 Encoding
+```powershell
+# Set console encoding to UTF-8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+chcp 65001
+
+# Save file with UTF-8 encoding
+$content | Out-File -FilePath file.txt -Encoding UTF8
+
+# Read file with UTF-8
+$content = Get-Content -Path file.txt -Encoding UTF8
+```
+
+### Unicode in PowerShell
+```powershell
+# PowerShell 7+ has better Unicode support
+# Upgrade: winget install Microsoft.PowerShell
+```
+
+**Rule:** Always set UTF-8 encoding when working with non-ASCII characters.
+
+## Execution Policy
+
+### Allow script execution
+```powershell
+# Check current policy
+Get-ExecutionPolicy
+
+# Set for current user (recommended)
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+
+# Set for single session
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+**Common policies:**
+- `Restricted`: No scripts allowed (default)
+- `RemoteSigned`: Local scripts OK, downloaded must be signed
+- `Unrestricted`: All scripts allowed
+
+**Rule:** Use `RemoteSigned` for development, never use `Unrestricted`.
+
+## Common Tasks
+
+### Finding files
+```powershell
+# Find files by name
+Get-ChildItem -Path . -Recurse -Filter "*.py"
+
+# Find files by content
+Get-ChildItem -Recurse | Select-String -Pattern "search_term"
+```
+
+### Working with JSON
+```powershell
+# Read JSON
+$config = Get-Content -Path config.json | ConvertFrom-Json
+
+# Write JSON
+$data | ConvertTo-Json | Out-File -FilePath output.json
+
+# Pretty print JSON
+$data | ConvertTo-Json -Depth 10 | Out-File -FilePath output.json
+```
+
+### HTTP requests
+```powershell
+# GET request
+Invoke-RestMethod -Uri "http://localhost:8000/health"
+
+# POST request
+$body = @{
+    text = "Sample text"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8000/api/endpoint" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body
+```
+
+## PowerShell vs CMD
+
+### When to use PowerShell
+- ✅ Modern Windows development
+- ✅ Working with objects (not just text)
+- ✅ Better scripting capabilities
+- ✅ Cross-platform (PowerShell 7+)
+
+### When CMD might be needed
+- ⚠️ Legacy batch files (.bat)
+- ⚠️ Some old tools only work in CMD
+
+**Rule:** ALWAYS prefer PowerShell over CMD for new projects.
+
+## Aliases and Shortcuts
+
+### Useful PowerShell aliases
+```powershell
+# These work out of the box
+ls      # Get-ChildItem
+cd      # Set-Location
+pwd     # Get-Location
+cat     # Get-Content
+echo    # Write-Output
+
+# But native PowerShell cmdlets are more powerful
+Get-ChildItem -Recurse
+```
+
+**Rule:** Learn PowerShell cmdlets, don't rely only on aliases.
+
+## Process Management
+
+### Running background processes
+```powershell
+# Start process in background
+Start-Process -FilePath "notepad.exe" -WindowStyle Hidden
+
+# Stop process by name
+Stop-Process -Name "notepad" -Force
+
+# Get running processes
+Get-Process | Where-Object {$_.Name -like "*docker*"}
+```
+
+## Path Separators in Different Contexts
+
+### Summary table
+| Context | Separator | Example |
+|---------|-----------|---------|
+| PowerShell paths | `\` | `C:\Users\Name` |
+| Docker volumes | `/` | `/app/data` |
+| Docker Compose (Windows) | `\` | `.\backend\app` |
+| URLs | `/` | `http://localhost:3000/` |
+| WSL paths | `/` | `/mnt/c/Users/Name` |
+
+**Rule:** Use appropriate separator for the context.
+
+## Troubleshooting
+
+### Docker Desktop not starting
+```powershell
+# Restart Docker Desktop
+Stop-Service docker
+Start-Service docker
+
+# Or from GUI: Right-click Docker icon → Restart
+```
+
+### Permission issues
+```powershell
+# Run PowerShell as Administrator
+Start-Process powershell -Verb RunAs
+
+# Check if running as admin
+([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+```
+
+### Port conflicts
+```powershell
+# Check what's using port 3000
+netstat -ano | findstr :3000
+
+# Kill process by PID
+Stop-Process -Id <PID> -Force
+```

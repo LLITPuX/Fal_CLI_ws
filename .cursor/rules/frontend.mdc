@@ -108,3 +108,125 @@ export const Component: React.FC<ComponentProps> = ({ data, onAction }) => {
 - Co-locate tests with components
 - Export types separately
 - Use barrel exports (index.ts)
+
+## Vite Environment Variables
+
+### Type definitions for import.meta.env
+```typescript
+// src/vite-env.d.ts
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  readonly VITE_API_URL?: string;
+  readonly VITE_APP_TITLE?: string;
+  readonly VITE_DEBUG?: string;
+  // Add more env variables here
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+```
+
+**Rule:** ALWAYS create `vite-env.d.ts` when using `import.meta.env`.
+
+### Environment variable naming
+```typescript
+// GOOD: Prefixed with VITE_
+VITE_API_URL=http://localhost:8000
+VITE_DEBUG=true
+
+// BAD: Will not be exposed to client
+API_URL=http://localhost:8000
+DEBUG=true
+```
+
+**Rule:** All client-side env variables MUST be prefixed with `VITE_`.
+
+### Usage in code
+```typescript
+// API client
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+
+// Feature flags
+const isDebugMode = import.meta.env.VITE_DEBUG === 'true';
+
+// Mode-specific behavior
+if (import.meta.env.DEV) {
+  console.log('Running in development mode');
+}
+```
+
+### Default values
+```typescript
+// .env.example
+VITE_API_URL=/api
+VITE_APP_TITLE=My App
+
+// .env.local (gitignored)
+VITE_API_URL=http://localhost:8000
+```
+
+**Rule:** Provide sensible defaults and document all env variables in `.env.example`.
+
+## Error Handling in Components
+
+### Error boundaries
+```typescript
+import { Component, ErrorInfo, ReactNode } from 'react';
+
+interface Props {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error?: Error;
+}
+
+class ErrorBoundary extends Component<Props, State> {
+  state: State = { hasError: false };
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Error caught by boundary:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || <div>Something went wrong</div>;
+    }
+    return this.props.children;
+  }
+}
+```
+
+### Async error handling in components
+```typescript
+const Component: React.FC = () => {
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAction = async () => {
+    try {
+      setError(null);
+      await apiCall();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      setError(message);
+    }
+  };
+
+  return (
+    <>
+      {error && <ErrorMessage message={error} onDismiss={() => setError(null)} />}
+      <button onClick={handleAction}>Action</button>
+    </>
+  );
+};
+```
+
+**Rule:** ALWAYS handle async errors in components explicitly.

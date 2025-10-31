@@ -1,0 +1,281 @@
+---
+description: Docker and containerization best practices
+alwaysApply: false
+---
+# DOCKER BEST PRACTICES
+
+## Build Context Rules
+
+### Always consider build context location
+```dockerfile
+# BAD: File outside build context
+COPY ../entrypoint.sh /entrypoint.sh
+
+# GOOD: File inside build context
+COPY entrypoint.sh /entrypoint.sh
+```
+
+**Rule:** All files referenced in `COPY` must be inside the build context directory.
+
+### Multi-service projects
+```
+project/
+├── backend/
+│   ├── Dockerfile        # Context: ./backend
+│   ├── entrypoint.sh     # COPY entrypoint.sh works
+│   └── app/
+└── frontend/
+    ├── Dockerfile        # Context: ./frontend
+    └── src/
+```
+
+**Rule:** Each service should have its own Dockerfile in its own directory.
+
+## File Permissions in Containers
+
+### Non-root user permissions
+```dockerfile
+# Create directories with proper ownership
+RUN mkdir -p /app/data && chown -R app:app /app/data
+
+# Copy files with ownership
+COPY --chown=app:app app /app/app
+```
+
+### Why non-root matters
+- Security: Limited privileges
+- Volume permissions: Avoid permission denied errors
+- Best practice: Never run production containers as root
+
+### Entrypoint permission fixes
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Always fix permissions for mounted volumes
+mkdir -p /app/data || true
+chown -R app:app /app/data || true
+
+# Switch to non-root user if running as root
+if [ "$(id -u)" = "0" ]; then
+    exec su-exec app "$@"
+else
+    exec "$@"
+fi
+```
+
+**Rule:** When using volumes with non-root users, ALWAYS set permissions in entrypoint.
+
+## Multi-stage Builds
+
+### Pattern for optimized images
+```dockerfile
+# Build stage
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+# Production stage
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+### Benefits
+- Smaller final image (no build dependencies)
+- Faster deployments
+- More secure (fewer packages)
+
+**Rule:** ALWAYS use multi-stage builds for compiled languages/frameworks.
+
+## Environment Variables
+
+### Dynamic configuration with templates
+```bash
+#!/bin/sh
+# docker-entrypoint.sh
+set -e
+
+# Replace environment variables in config template
+envsubst '${API_PORT} ${DB_HOST}' < /etc/config.template > /etc/config.conf
+
+# Start application
+exec "$@"
+```
+
+### In docker-compose.yml
+```yaml
+services:
+  backend:
+    environment:
+      - API_PORT=${API_PORT:-8000}
+      - DB_HOST=${DB_HOST:-localhost}
+```
+
+**Rule:** Use `envsubst` for runtime configuration substitution.
+
+### Default values
+```dockerfile
+# Set defaults in Dockerfile
+ENV API_PORT=8000
+ENV LOG_LEVEL=INFO
+
+# Can be overridden in docker-compose or runtime
+```
+
+**Rule:** ALWAYS provide sensible defaults for environment variables.
+
+## Health Checks
+
+### Always define health checks
+```yaml
+# docker-compose.yml
+healthcheck:
+  test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+```
+
+### In Dockerfile
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+```
+
+### Health check endpoints
+```python
+# FastAPI
+@app.get("/health")
+async def health():
+    return {"status": "ok", "timestamp": datetime.utcnow()}
+```
+
+**Rule:** Every service MUST have a health check endpoint and healthcheck configuration.
+
+## Volume Considerations
+
+### Named volumes vs bind mounts
+```yaml
+services:
+  backend:
+    volumes:
+      # Named volume (for data persistence)
+      - backend-data:/app/data
+      
+      # Bind mount (for development hot-reload)
+      - ./backend/app:/app/app
+      
+      # Read-only mount (for credentials)
+      - ${HOST_GEMINI_DIR}:/host_gemini:ro
+
+volumes:
+  backend-data:
+    driver: local
+```
+
+### Volume permissions
+```dockerfile
+# Create volume mount point with correct ownership
+RUN mkdir -p /app/data && chown -R app:app /app/data
+VOLUME /app/data
+```
+
+**Rule:** Use named volumes for production data, bind mounts for development only.
+
+## Networking
+
+### Service communication
+```yaml
+services:
+  backend:
+    networks:
+      - app-network
+  
+  frontend:
+    networks:
+      - app-network
+    depends_on:
+      backend:
+        condition: service_healthy
+
+networks:
+  app-network:
+    driver: bridge
+```
+
+**Rule:** Use custom networks for service isolation and communication.
+
+### DNS resolution
+```yaml
+# Frontend can reach backend via service name
+proxy_pass http://backend:8000/;
+# NOT http://localhost:8000/
+```
+
+**Rule:** Use service names for inter-container communication, not localhost.
+
+## .dockerignore
+
+### Always include .dockerignore
+```
+# .dockerignore
+node_modules
+__pycache__
+*.pyc
+.git
+.env
+.venv
+dist
+build
+*.log
+.DS_Store
+```
+
+**Rule:** ALWAYS create .dockerignore to reduce build context size.
+
+## Layer Caching Optimization
+
+### Order matters
+```dockerfile
+# GOOD: Dependencies first (cached)
+COPY package.json package-lock.json ./
+RUN npm install
+COPY . .
+
+# BAD: Copy all first (cache busted on any file change)
+COPY . .
+RUN npm install
+```
+
+**Rule:** Copy dependency files first, install, then copy source code.
+
+## Security Best Practices
+
+### 1. Use specific base image tags
+```dockerfile
+# GOOD: Specific version
+FROM python:3.12-slim
+
+# BAD: Latest tag (unpredictable)
+FROM python:latest
+```
+
+### 2. Scan images for vulnerabilities
+```bash
+docker scan myimage:latest
+```
+
+### 3. Use official images
+```dockerfile
+FROM node:20-alpine     # Official Node.js
+FROM nginx:alpine       # Official Nginx
+FROM python:3.12-slim   # Official Python
+```
+
+**Rule:** Always use official images with specific version tags.

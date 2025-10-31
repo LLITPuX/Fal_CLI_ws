@@ -109,3 +109,224 @@ DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 async def get_items(db: DbSession):
     return await db.execute(select(Item))
 ```
+
+## File Operations Best Practices
+
+### Creating files with proper ownership
+```python
+from pathlib import Path
+import os
+import tempfile
+
+# Create directory if needed
+output_dir = Path("data")
+output_dir.mkdir(parents=True, exist_ok=True)
+
+# Atomic file write (prevents corruption)
+final_path = output_dir / f"{file_id}.json"
+tmp_path = final_path.with_suffix(".tmp")
+
+# Write to temp file first
+tmp_path.write_text(content, encoding="utf-8")
+
+# Atomic rename (OS-level operation)
+tmp_path.replace(final_path)
+```
+
+**Rule:** ALWAYS use atomic writes for important files.
+
+### Docker volume permissions
+```python
+import os
+from pathlib import Path
+
+def ensure_writable_directory(path: Path) -> None:
+    """Ensure directory exists and is writable."""
+    path.mkdir(parents=True, exist_ok=True)
+    
+    # Check if writable
+    if not os.access(path, os.W_OK):
+        raise PermissionError(f"Directory {path} is not writable")
+
+def is_docker() -> bool:
+    """Check if running inside Docker container."""
+    return os.path.exists('/.dockerenv')
+
+# Usage
+data_dir = Path("/app/data")
+ensure_writable_directory(data_dir)
+```
+
+**Rule:** Check directory permissions before writing files, especially in Docker.
+
+### Temporary files
+```python
+import tempfile
+from pathlib import Path
+
+# Create temporary file in specific directory
+with tempfile.NamedTemporaryFile(
+    mode='w',
+    dir='/app/data',
+    delete=False,
+    suffix='.json'
+) as tmp:
+    tmp.write(content)
+    tmp_path = Path(tmp.name)
+
+# Process temp file
+try:
+    # Do something with tmp_path
+    final_path = process(tmp_path)
+finally:
+    # Cleanup
+    tmp_path.unlink(missing_ok=True)
+```
+
+## Environment Configuration
+
+### Use pydantic-settings for all config
+```python
+from pydantic_settings import BaseSettings
+from typing import Literal
+import os
+
+class Settings(BaseSettings):
+    # API Settings
+    api_title: str = "My API"
+    api_version: str = "1.0.0"
+    api_port: int = int(os.getenv("API_PORT", "8000"))
+    
+    # Database
+    db_url: str = "postgresql://localhost/db"
+    db_pool_size: int = 5
+    
+    # Logging
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    
+    # External Services
+    gemini_cli: str = os.getenv("GEMINI_CLI", "gemini")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+
+# Single instance
+settings = Settings()
+```
+
+**Rule:** ALL configuration MUST go through Settings class, never use `os.getenv()` directly in business logic.
+
+### Configuration validation
+```python
+from pydantic import field_validator
+
+class Settings(BaseSettings):
+    api_port: int
+    
+    @field_validator('api_port')
+    def validate_port(cls, v):
+        if not (1024 <= v <= 65535):
+            raise ValueError('Port must be between 1024 and 65535')
+        return v
+```
+
+## Subprocess Best Practices
+
+### Async subprocess execution
+```python
+import asyncio
+import shlex
+
+async def run_command(
+    command: str,
+    timeout: int = 30,
+) -> tuple[str, str, int]:
+    """Run shell command asynchronously.
+    
+    Returns:
+        (stdout, stderr, returncode)
+    """
+    # Parse command safely
+    args = shlex.split(command)
+    
+    # Create subprocess
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    
+    try:
+        # Wait with timeout
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=timeout
+        )
+        
+        return (
+            stdout.decode('utf-8', errors='ignore'),
+            stderr.decode('utf-8', errors='ignore'),
+            proc.returncode
+        )
+        
+    except asyncio.TimeoutError:
+        # Kill process on timeout
+        proc.kill()
+        await proc.wait()
+        raise TimeoutError(f"Command timed out after {timeout}s")
+```
+
+**Rule:** ALWAYS use `shlex.split()` for command parsing, never use `shell=True`.
+
+### Security considerations
+```python
+# BAD: Shell injection vulnerability
+command = f"gemini --prompt '{user_input}'"  # DANGEROUS!
+os.system(command)
+
+# GOOD: Parameterized arguments
+args = ["gemini", "--prompt", user_input]
+subprocess.run(args, capture_output=True)
+```
+
+**Rule:** NEVER interpolate user input directly into shell commands.
+
+## Logging Best Practices
+
+### Structured logging
+```python
+import logging
+import json
+from datetime import datetime
+
+# Configure structured logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+)
+
+logger = logging.getLogger(__name__)
+
+# Log with context
+logger.info(
+    "Request processed",
+    extra={
+        "request_id": request_id,
+        "duration_ms": duration,
+        "status": "success"
+    }
+)
+```
+
+### Don't log sensitive data
+```python
+# BAD: Logging sensitive data
+logger.info(f"User logged in: {user.email}, password: {user.password}")
+
+# GOOD: Log only necessary info
+logger.info(f"User logged in: {user.id}")
+```
+
+**Rule:** NEVER log passwords, tokens, or other sensitive data.
