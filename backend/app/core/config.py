@@ -24,8 +24,15 @@ class Settings(BaseSettings):
     # Gemini CLI Settings
     gemini_cli: str = os.getenv("GEMINI_CLI", "gemini")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    gemini_timeout: int = 90  # seconds
+    gemini_timeout: int = 300  # seconds (5 minutes per model)
     google_cloud_project: str | None = os.getenv("GOOGLE_CLOUD_PROJECT")
+    
+    # All Gemini models for multi-model testing
+    gemini_models: list[str] = [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-light",
+    ]
 
     # Storage Settings
     default_output_dir: str = "data"

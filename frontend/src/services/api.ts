@@ -1,13 +1,13 @@
 // API client for backend communication
 
-import type { StructureRequest, StructureResponse, ApiError } from '../types/api';
+import type { StructureRequest, MultiModelResponse, ApiError } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 export class ApiClient {
   private controller: AbortController | null = null;
 
-  async structureText(request: StructureRequest): Promise<StructureResponse> {
+  async structureText(request: StructureRequest): Promise<MultiModelResponse> {
     this.controller = new AbortController();
 
     try {
@@ -25,7 +25,7 @@ export class ApiClient {
         throw new Error(error.detail || `HTTP ${response.status}`);
       }
 
-      const data: StructureResponse = await response.json();
+      const data: MultiModelResponse = await response.json();
       return data;
     } catch (error) {
       if (error instanceof Error) {

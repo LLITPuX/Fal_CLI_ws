@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import shlex
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,7 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.core.exceptions import CLIExecutionError, JSONParsingError, ValidationException
-from app.models.schemas import StructuredDoc
+from app.models.schemas import ProcessingMetrics, StructuredDoc
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +64,14 @@ class GeminiService:
             f"TEXT:\n{text}\n"
         )
 
-    async def run_cli(self, prompt: str) -> str:
-        """Execute Gemini CLI command asynchronously.
+    async def run_cli(self, prompt: str) -> tuple[str, float]:
+        """Execute Gemini CLI command asynchronously with timing.
 
         Args:
             prompt: Formatted prompt string
 
         Returns:
-            Raw CLI stdout output
+            Tuple of (raw CLI stdout output, processing time in seconds)
 
         Raises:
             CLIExecutionError: If CLI execution fails
@@ -85,6 +86,7 @@ class GeminiService:
         ]
 
         logger.info(f"Executing CLI with model: {self.model}")
+        start_time = time.time()
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -97,6 +99,8 @@ class GeminiService:
                 proc.communicate(), timeout=self.timeout
             )
 
+            processing_time = time.time() - start_time
+
             if proc.returncode != 0:
                 error_msg = stderr.decode("utf-8", errors="ignore")
                 logger.error(f"CLI failed with code {proc.returncode}: {error_msg}")
@@ -105,8 +109,11 @@ class GeminiService:
                 )
 
             output = stdout.decode("utf-8", errors="ignore")
+            logger.info(
+                f"CLI completed in {processing_time:.2f}s with model {self.model}"
+            )
             logger.debug(f"CLI output: {output[:200]}...")
-            return output
+            return output, processing_time
 
         except asyncio.TimeoutError:
             logger.error(f"CLI timeout after {self.timeout}s")
@@ -211,6 +218,32 @@ class GeminiService:
             logger.error(f"Schema validation failed: {e}")
             raise ValidationException(f"Schema validation failed: {e}") from e
 
+    def calculate_metrics(
+        self, model: str, prompt: str, output: str, processing_time: float
+    ) -> ProcessingMetrics:
+        """Calculate processing metrics.
+
+        Args:
+            model: Gemini model name
+            prompt: Input prompt text
+            output: Output text from CLI
+            processing_time: Time taken to process
+
+        Returns:
+            ProcessingMetrics instance
+        """
+        input_chars = len(prompt)
+        output_chars = len(output)
+
+        return ProcessingMetrics(
+            model=model,
+            processing_time_seconds=round(processing_time, 2),
+            input_characters=input_chars,
+            output_characters=output_chars,
+            input_tokens_estimate=input_chars // 4,  # Rough estimate
+            output_tokens_estimate=output_chars // 4,  # Rough estimate
+        )
+
     async def save_result(
         self, doc: StructuredDoc, output_dir: str | None = None
     ) -> tuple[str, Path]:
@@ -242,7 +275,7 @@ class GeminiService:
 
     async def structure_text(
         self, text: str, output_dir: str | None = None
-    ) -> tuple[str, str, StructuredDoc]:
+    ) -> tuple[str, str, StructuredDoc, ProcessingMetrics]:
         """Complete workflow: prompt -> CLI -> parse -> validate -> save.
 
         Args:
@@ -250,7 +283,7 @@ class GeminiService:
             output_dir: Optional output directory
 
         Returns:
-            Tuple of (file_id, json_path, structured_doc)
+            Tuple of (file_id, json_path, structured_doc, metrics)
 
         Raises:
             CLIExecutionError: If CLI fails
@@ -260,8 +293,8 @@ class GeminiService:
         # Build prompt
         prompt = self.build_prompt(text)
 
-        # Execute CLI
-        raw_output = await self.run_cli(prompt)
+        # Execute CLI with timing
+        raw_output, processing_time = await self.run_cli(prompt)
 
         # Parse JSON
         parsed_data = self.extract_json(raw_output)
@@ -272,5 +305,8 @@ class GeminiService:
         # Save result
         file_id, json_path = await self.save_result(doc, output_dir)
 
-        return file_id, str(json_path), doc
+        # Calculate metrics
+        metrics = self.calculate_metrics(self.model, prompt, raw_output, processing_time)
+
+        return file_id, str(json_path), doc, metrics
 
