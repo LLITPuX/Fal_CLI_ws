@@ -111,7 +111,7 @@ docker compose down -v
 ## Що далі?
 
 - Читайте [README.md](README.md) для повної документації
-- Експериментуйте з різними моделями (2.5-pro, 2.5-flash, 1.5-flash-8b)
+- Використовуйте gemini-2.5-flash (найкращий баланс для free tier)
 - Перегляньте API docs на http://localhost:3000/api/docs
 
 ---

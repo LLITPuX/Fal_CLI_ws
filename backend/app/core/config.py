@@ -27,11 +27,13 @@ class Settings(BaseSettings):
     gemini_timeout: int = 300  # seconds (5 minutes per model)
     google_cloud_project: str | None = os.getenv("GOOGLE_CLOUD_PROJECT")
     
-    # All Gemini models for multi-model testing
+    # Gemini models for testing
+    # For free tier, use only gemini-2.5-flash to avoid quota limits
+    # gemini-2.5-pro has very low RPM (2) and daily limits
+    # gemini-1.5-flash-8b and gemini-2.5-flash-light don't exist
     gemini_models: list[str] = [
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-1.5-flash-8b",  # Lightweight model
+        "gemini-2.5-flash",  # Best balance: 15 RPM, good quality
+        # "gemini-2.5-pro",  # Uncomment for paid tier only (2 RPM)
     ]
 
     # Storage Settings

@@ -138,13 +138,13 @@ export const JsonViewer: React.FC<JsonViewerProps> = ({ data }) => {
   return (
     <div className="json-viewer">
       <div className="viewer-header">
-        <h3>🤖 Multi-Model Results</h3>
+        <h3>✨ Structured Results</h3>
         <div className="summary-stats">
-          <span className="stat success">✅ {successfulResults.length} succeeded</span>
+          <span className="stat success">✅ {successfulResults.length} model(s)</span>
           {failedResults.length > 0 && (
             <span className="stat error">❌ {failedResults.length} failed</span>
           )}
-          <span className="stat">⏱️ Total: {data.total_processing_time_seconds}s</span>
+          <span className="stat">⏱️ Time: {data.total_processing_time_seconds}s</span>
         </div>
       </div>
 

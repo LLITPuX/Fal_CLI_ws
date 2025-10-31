@@ -28,8 +28,8 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>🤖 Gemini Multi-Model Tester</h1>
-        <p>Compare all three Gemini models side-by-side with performance metrics</p>
+        <h1>🤖 Gemini Text Structurer</h1>
+        <p>Transform unstructured text into structured JSON with performance metrics</p>
       </header>
 
       <main className="app-main">
@@ -45,10 +45,10 @@ function App() {
             {loadingState.status === 'loading' && (
               <div className="loading-state">
                 <div className="spinner-large" />
-                <p>Processing your text with all Gemini models...</p>
-                <p className="loading-hint">⏱️ This will take up to 15 minutes (5 min per model)</p>
+                <p>Processing your text with Gemini AI...</p>
+                <p className="loading-hint">⏱️ This may take up to 5 minutes</p>
                 <div className="loading-models">
-                  <span>Testing: gemini-2.5-pro → gemini-2.5-flash → gemini-1.5-flash-8b</span>
+                  <span>Using: gemini-2.5-flash (optimal for free tier)</span>
                 </div>
               </div>
             )}
@@ -61,13 +61,11 @@ function App() {
 
             {loadingState.status === 'idle' && (
               <div className="idle-state">
-                <div className="idle-icon">🔬</div>
-                <h3>Ready to test Gemini models</h3>
-                <p>Enter text to process with all three models sequentially</p>
+                <div className="idle-icon">📝</div>
+                <h3>Ready to structure your text</h3>
+                <p>Enter unstructured text to transform it into structured JSON</p>
                 <div className="models-list">
-                  <span>📊 gemini-2.5-pro</span>
-                  <span>⚡ gemini-2.5-flash</span>
-                  <span>🚀 gemini-1.5-flash-8b</span>
+                  <span>⚡ Powered by gemini-2.5-flash</span>
                 </div>
               </div>
             )}
@@ -76,7 +74,7 @@ function App() {
       </main>
 
       <footer className="app-footer">
-        <p>Powered by Google Gemini AI · Multi-Model Comparison Tool · v2.1.0</p>
+        <p>Powered by Google Gemini AI · Text Structuring Tool · v2.2.0</p>
       </footer>
     </div>
   );

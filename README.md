@@ -6,7 +6,7 @@ Modern full-stack application for structuring unstructured text using Google Gem
 
 - **Modern Web Interface** - React + TypeScript with beautiful dark theme UI
 - **FastAPI Backend** - Async-first, modular architecture with SOLID principles
-- **Gemini AI Integration** - Multiple model support (2.5-pro, 2.5-flash, 1.5-flash-8b)
+- **Gemini AI Integration** - Powered by gemini-2.5-flash (optimal for free tier)
 - **JSON Validation** - Automatic schema validation with Pydantic
 - **Docker Compose** - Full containerized deployment
 - **Real-time Processing** - Async operations with loading states
