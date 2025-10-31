@@ -104,20 +104,38 @@ class GeminiService:
             if proc.returncode != 0:
                 error_msg = stderr.decode("utf-8", errors="ignore")
                 logger.error(f"CLI failed with code {proc.returncode}: {error_msg}")
+                
+                # Check for quota/rate limit errors
+                if "429" in error_msg or "Resource exhausted" in error_msg:
+                    raise CLIExecutionError(
+                        f"Gemini API quota exceeded (429). Please wait and try again later."
+                    )
+                
                 raise CLIExecutionError(
                     f"CLI error ({proc.returncode}): {error_msg}"
                 )
 
             output = stdout.decode("utf-8", errors="ignore")
+            stderr_text = stderr.decode("utf-8", errors="ignore") if stderr else ""
+            
             logger.info(
                 f"CLI completed in {processing_time:.2f}s with model {self.model}"
             )
             logger.info(f"CLI raw output length: {len(output)} chars")
             logger.info(f"CLI raw output (first 500 chars): {output[:500]}")
-            if stderr:
-                stderr_text = stderr.decode("utf-8", errors="ignore")
-                if stderr_text.strip():
-                    logger.warning(f"CLI stderr: {stderr_text[:500]}")
+            
+            if stderr_text.strip():
+                logger.warning(f"CLI stderr: {stderr_text[:500]}")
+                
+                # Check for API errors in stderr even with returncode 0
+                if "Error when talking to Gemini API" in stderr_text:
+                    if "429" in stderr_text or "Resource exhausted" in stderr_text:
+                        raise CLIExecutionError(
+                            "Gemini API quota exceeded (429). Please wait and try again."
+                        )
+                    else:
+                        logger.error(f"Gemini API error in stderr: {stderr_text[:1000]}")
+            
             return output, processing_time
 
         except asyncio.TimeoutError:
@@ -151,11 +169,17 @@ class GeminiService:
             parsed = json.loads(s)
             # If wrapped in {"response": "..."}, unwrap it
             if isinstance(parsed, dict) and "response" in parsed:
-                s = parsed["response"]
-                # Re-parse unwrapped content
-                if isinstance(s, str):
-                    parsed = json.loads(self._extract_json_from_text(s))
-                return parsed
+                response_content = parsed["response"]
+                
+                # Check if response is empty or not a string
+                if not response_content or not isinstance(response_content, str):
+                    raise JSONParsingError(
+                        f"Empty or invalid response from CLI. Full output: {s[:500]}"
+                    )
+                
+                # Re-parse unwrapped content (may have markdown)
+                extracted = self._extract_json_from_text(response_content)
+                return json.loads(extracted)
             return parsed
         except json.JSONDecodeError:
             pass
@@ -182,25 +206,32 @@ class GeminiService:
         Raises:
             JSONParsingError: If no valid JSON found
         """
-        # Remove markdown code blocks
+        original_text = text
+        
+        # Remove markdown code blocks (try different patterns)
         if "```json" in text:
             start = text.find("```json") + 7
             end = text.find("```", start)
             if end != -1:
                 text = text[start:end].strip()
         elif "```" in text:
+            # Handle ```\njson\n{...} or just ```\n{...}
             start = text.find("```") + 3
             end = text.find("```", start)
             if end != -1:
                 text = text[start:end].strip()
+                # Remove potential "json" at the beginning
+                if text.startswith("json\n") or text.startswith("json "):
+                    text = text[5:].strip()
 
         # Extract JSON object
         start = text.find("{")
         end = text.rfind("}")
 
         if start == -1 or end == -1 or end <= start:
+            logger.error(f"Could not find JSON braces. Original text: {original_text[:500]}")
             raise JSONParsingError(
-                f"No valid JSON object found in output: {text[:500]}"
+                f"No valid JSON object found in output: {original_text[:500]}"
             )
 
         return text[start : end + 1]
