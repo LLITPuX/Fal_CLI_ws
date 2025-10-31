@@ -1,291 +1,401 @@
-# Gemini CLI Service (Docker Compose)
+# Gemini Text Structurer
 
-FastAPI сервіс, який викликає Gemini CLI в неінтерактивному режимі для структурування неструктурованого тексту у JSON.
+Modern full-stack application for structuring unstructured text using Google Gemini AI.
 
-## Можливості
+## 🚀 Features
 
-- 🚀 **FastAPI REST API** з асинхронною обробкою
-- 🤖 **Gemini CLI integration** через Docker
-- 📦 **Автоматична валідація** вихідного JSON за Pydantic-схемою
-- 🔒 **Безпечне монтування** креденшелів з хоста
-- 📊 **Структурування тексту** з автоматичним визначенням title, date, summary, tags, sections
+- **Modern Web Interface** - React + TypeScript with beautiful dark theme UI
+- **FastAPI Backend** - Async-first, modular architecture with SOLID principles
+- **Gemini AI Integration** - Multiple model support (2.5-pro, 2.5-flash, 2.5-flash-light)
+- **JSON Validation** - Automatic schema validation with Pydantic
+- **Docker Compose** - Full containerized deployment
+- **Real-time Processing** - Async operations with loading states
+- **Copy & Download** - Export structured results as JSON
 
-## Вимоги
+## 📋 Architecture
 
-- Docker Desktop на Windows
-- Аутентифіковані креденшели Gemini CLI у `C:\Users\<YourUser>\.gemini`
-- Google Cloud Project ID (для workspace GCA)
+```
+┌─────────────────┐         ┌──────────────────┐         ┌────────────────┐
+│   Frontend      │  HTTP   │     Backend      │  CLI    │  Gemini AI     │
+│   (React+TS)    │────────▶│    (FastAPI)     │────────▶│  (Google)      │
+│   Port: 3000    │         │    Port: 8000    │         │                │
+└─────────────────┘         └──────────────────┘         └────────────────┘
+        │                            │
+        │    Nginx Reverse Proxy     │
+        └────────────────────────────┘
+```
 
-## Швидкий старт
+### Stack
 
-### 1. Налаштування `.env`
+**Frontend:**
+- React 18
+- TypeScript (strict mode)
+- Vite (build tool)
+- Nginx (production server)
+
+**Backend:**
+- FastAPI 0.115+
+- Python 3.12
+- Pydantic v2 (validation)
+- Async/await patterns
+
+**Infrastructure:**
+- Docker Compose
+- Gemini CLI (npm global)
+- Multi-stage builds
+
+## 🎯 Project Structure
+
+```
+Gemini CLI/
+├── backend/
+│   ├── app/
+│   │   ├── api/              # REST endpoints
+│   │   │   ├── __init__.py
+│   │   │   └── routes.py
+│   │   ├── core/             # Config & exceptions
+│   │   │   ├── config.py
+│   │   │   └── exceptions.py
+│   │   ├── models/           # Pydantic schemas
+│   │   │   └── schemas.py
+│   │   ├── services/         # Business logic
+│   │   │   └── gemini_service.py
+│   │   └── main.py           # FastAPI app
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── components/       # React components
+│   │   │   ├── TextInput.tsx
+│   │   │   ├── JsonViewer.tsx
+│   │   │   └── ErrorMessage.tsx
+│   │   ├── services/         # API client
+│   │   │   └── api.ts
+│   │   ├── types/            # TypeScript types
+│   │   │   └── api.ts
+│   │   ├── styles/
+│   │   │   └── App.css
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── nginx.conf
+│   ├── Dockerfile
+│   └── package.json
+├── docker-compose.yml
+├── .env
+└── README.md
+```
+
+## 🛠️ Setup & Installation
+
+### Prerequisites
+
+- Docker Desktop (Windows)
+- Google Gemini credentials in `C:\Users\<YourUser>\.gemini`
+- Google Cloud Project ID
+
+### 1. Clone & Configure
 
 ```powershell
-# Копіюємо приклад і редагуємо
-Copy-Item env.example .env
+# Copy environment template
+Copy-Item .env.new .env
+
+# Edit .env with your settings
 notepad .env
 ```
 
-**Обов'язкові параметри в `.env`:**
+**Required `.env` variables:**
+
 ```ini
-HOST_GEMINI_DIR=C:\Users\E6440\.gemini
+HOST_GEMINI_DIR=C:\Users\YourUser\.gemini
 GEMINI_CLI=gemini
-GEMINI_MODEL=gemini-2.5-flash  # Available: gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-light
-GOOGLE_CLOUD_PROJECT=your-actual-gcp-project-id  # <-- Вставте свій project ID!
+GEMINI_MODEL=gemini-2.5-flash
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
 API_PORT=8000
+FRONTEND_PORT=3000
 ```
 
-### 2. Збірка і запуск
+### 2. Build & Run
 
 ```powershell
+# Build all services
 docker compose build --no-cache
+
+# Start services
 docker compose up -d
+
+# Check logs
+docker compose logs -f
 ```
 
-### 3. Перевірка здоров'я
+### 3. Access Application
 
-```powershell
-curl http://localhost:8000/health
-# Відповідь: {"status":"ok"}
+- **Frontend:** http://localhost:3000
+- **Backend API:** http://localhost:3000/api/health
+- **API Docs:** http://localhost:3000/api/docs
+
+## 📖 Usage
+
+### Web Interface
+
+1. Open http://localhost:3000
+2. Paste unstructured text in the textarea
+3. (Optional) Configure model in Advanced Settings
+4. Click "Structure Text"
+5. View structured result with:
+   - Title, date, summary, tags
+   - Sections with content
+   - Copy to clipboard or download JSON
+
+### API Endpoints
+
+#### Health Check
+
+```bash
+curl http://localhost:3000/api/health
 ```
 
-## Використання API
+Response:
+```json
+{"status": "ok", "service": "gemini-text-structurer"}
+```
 
-### Ендпоінт: `POST /structure`
+#### Structure Text
 
-Структурує неструктурований текст у JSON.
-
-**Request:**
 ```powershell
 $body = @{
-    text = "Неструктурований текст про AI. Дата: 31 жовтня 2025. Теми: машинне навчання, нейронні мережі."
-} | ConvertTo-Json
+    text = "Неструктурований текст про AI..."
+    model = "gemini-2.5-flash"
+} | ConvertTo-Json -Compress
 
-Invoke-RestMethod -Uri http://localhost:8000/structure `
+Invoke-RestMethod -Uri http://localhost:3000/api/structure `
     -Method Post `
     -ContentType "application/json; charset=utf-8" `
     -Body $body
 ```
 
-**Response:**
+Response:
 ```json
 {
   "id": "abc123...",
-  "json_path": "data/abc123....json",
+  "json_path": "data/abc123.json",
   "data": {
-    "title": "AI and Machine Learning",
+    "title": "AI Overview",
     "date_iso": "2025-10-31",
-    "summary": "Короткий опис тексту",
-    "tags": ["AI", "ML", "neural networks"],
+    "summary": "...",
+    "tags": ["AI", "ML"],
     "sections": [
-      {
-        "name": "Introduction",
-        "content": "..."
-      }
+      {"name": "Introduction", "content": "..."}
     ]
   }
 }
 ```
 
-### Додаткові параметри
+## 🔧 Development
 
-```json
-{
-  "text": "ваш текст...",
-  "out_dir": "custom_output",        // необов'язково
-  "cli_command": "gemini",            // необов'язково
-  "model": "gemini-2.5-flash"         // необов'язково (gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-light)
-}
-```
-
-## Архітектура
-
-```
-┌─────────────┐     HTTP POST       ┌──────────────┐
-│   Frontend  │ ──────────────────> │  FastAPI     │
-│             │                     │  (port 8000) │
-└─────────────┘                     └──────┬───────┘
-                                           │
-                                           │ subprocess
-                                           v
-                                    ┌──────────────┐
-                                    │  Gemini CLI  │
-                                    │  (npm global)│
-                                    └──────┬───────┘
-                                           │
-                                           │ authenticated
-                                           v
-                                    ┌──────────────┐
-                                    │  Google AI   │
-                                    │  (GCP)       │
-                                    └──────────────┘
-```
-
-## Структура проєкту
-
-```
-Gemini CLI/
-├── docker-compose.yml      # Compose config
-├── Dockerfile              # Multi-stage build (Node.js + Python)
-├── entrypoint.sh           # Credential staging script
-├── env.example             # Environment variables template
-├── README.md               # Ця документація
-└── app/
-    ├── requirements.txt    # Python deps (FastAPI, uvicorn, pydantic)
-    └── app/
-        └── main_cli.py     # FastAPI application
-```
-
-## Технічні деталі
-
-### Entrypoint механізм
-
-`entrypoint.sh` при старті контейнера:
-1. Копіює креденшели з `/host_gemini` (змонтована `C:\Users\E6440\.gemini`)
-2. Дублює у `/home/app/.gemini`, `/home/app/.config/gemini`, `/home/app/.config/@google/gemini`
-3. Встановлює права доступу для користувача `app`
-4. Додає `/home/app/.local/bin` до `PATH` (для `uvicorn`)
-
-### JSON парсинг
-
-Gemini CLI повертає відповідь у форматі:
-```json
-{
-  "response": "```json\n{...}\n```"
-}
-```
-
-Парсер автоматично:
-- Розпаковує `response` поле
-- Видаляє markdown code blocks (` ```json ... ``` `)
-- Валідує фінальний JSON за Pydantic-схемою
-
-### Валідація схеми
-
-```python
-class StructuredDoc(BaseModel):
-    title: str
-    date_iso: str              # ISO 8601 (YYYY-MM-DD)
-    summary: str
-    tags: list[str] = []
-    sections: list[dict] = []  # [{"name": "...", "content": "..."}]
-```
-
-## Управління
-
-### Перезапуск
+### Backend Development
 
 ```powershell
-docker compose restart gemini-cli-api
+# Enter backend container
+docker compose exec backend bash
+
+# Run tests (when implemented)
+pytest
+
+# Check logs
+docker compose logs -f backend
 ```
 
-### Перегляд логів
+### Custom Ports
 
-```powershell
-docker compose logs -f gemini-cli-api
+Якщо потрібно змінити порти:
+
+```ini
+# .env
+API_PORT=9000        # Backend internal port
+FRONTEND_PORT=8080   # Frontend external port
 ```
 
-### Зупинка
-
+Після зміни:
 ```powershell
 docker compose down
+docker compose build
+docker compose up -d
 ```
 
-### Оновлення коду
+### Frontend Development
 
 ```powershell
-# Код монтується як volume, тому зміни застосовуються одразу
-docker compose restart gemini-cli-api
+# Local development (requires Node.js)
+cd frontend
+npm install
+npm run dev
+
+# Or use container
+docker compose exec frontend sh
 ```
 
-## Troubleshooting
+### Hot Reload
 
-### Помилка: `ProjectIdRequiredError`
+Both services support hot reload in development:
+- **Backend:** `/app/app` mounted as volume
+- **Frontend:** Vite HMR through Nginx proxy
 
-**Причина:** Не встановлено `GOOGLE_CLOUD_PROJECT` у `.env`
+## 🐛 Troubleshooting
 
-**Рішення:**
+### Backend Issues
+
+**Error: `ProjectIdRequiredError`**
 ```powershell
-# Відредагуйте .env і додайте свій project ID
+# Ensure GOOGLE_CLOUD_PROJECT is set in .env
 notepad .env
-# Перезапустіть контейнер
-docker compose restart gemini-cli-api
+docker compose restart backend
 ```
 
-### Помилка: `Connection failed for 'MCP_DOCKER'`
-
-**Причина:** Gemini CLI шукає MCP сервери, які недоступні в контейнері
-
-**Рішення:** Ця помилка не критична — CLI продовжує працювати з основною моделлю.
-
-### Помилка: `CLI did not return valid JSON`
-
-**Причина:** Gemini повернув текст замість JSON
-
-**Рішення:** Перевірте промпт у `build_prompt()` — він повинен чітко вимагати JSON.
-
-### Помилка: `Schema validation failed`
-
-**Причина:** JSON не відповідає очікуваній структурі
-
-**Рішення:** Перевірте логи (`docker compose logs`) і адаптуйте `StructuredDoc` модель або промпт.
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `HOST_GEMINI_DIR` | ✅ Yes | - | Шлях до `.gemini` на хості |
-| `GEMINI_CLI` | No | `gemini` | Команда CLI |
-| `GEMINI_MODEL` | No | `gemini-2.5-flash` | Модель Gemini (2.5-pro, 2.5-flash, 2.5-flash-light) |
-| `GOOGLE_CLOUD_PROJECT` | ✅ Yes | - | GCP Project ID |
-| `API_PORT` | No | `8000` | Порт FastAPI |
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/structure` | Структурування тексту |
-
-## Залежності
-
-### Python (requirements.txt)
-- `fastapi==0.115.5`
-- `uvicorn[standard]==0.32.0`
-- `pydantic==2.9.2`
-
-### System (Dockerfile)
-- `python:3.12-slim`
-- `nodejs` + `npm`
-- `@google/gemini-cli` (npm global)
-
-## Розробка
-
-### Додавання нових полів до схеми
-
-1. Оновіть `StructuredDoc` в `main_cli.py`:
-```python
-class StructuredDoc(BaseModel):
-    title: str
-    # ... existing fields
-    new_field: str = Field(default="", description="New field")
+**Error: CLI timeout**
+```
+# Increase timeout in backend/app/core/config.py
+gemini_timeout: int = 120  # seconds
+docker compose restart backend
 ```
 
-2. Оновіть промпт у `build_prompt()`:
-```python
-def build_prompt(text: str) -> str:
-    return (
-        "Return JSON with: title, date_iso, summary, tags, sections, new_field\n"
-        # ...
-    )
+### Frontend Issues
+
+**Cannot connect to backend**
+```powershell
+# Check backend health
+docker compose ps
+curl http://localhost:3000/api/health
+
+# Check nginx config
+docker compose exec frontend cat /etc/nginx/conf.d/default.conf
 ```
 
-3. Перезапустіть: `docker compose restart gemini-cli-api`
+**Build fails**
+```powershell
+# Clear cache and rebuild
+docker compose down
+docker compose build --no-cache frontend
+docker compose up -d
+```
 
-## Ліцензія
+## 🧪 Testing
+
+### Backend Tests
+
+```bash
+# Unit tests
+pytest backend/tests/
+
+# Integration tests
+pytest backend/tests/integration/
+
+# Coverage
+pytest --cov=app --cov-report=html
+```
+
+### Frontend Tests
+
+```bash
+# Unit tests
+npm test
+
+# E2E tests (when implemented)
+npm run test:e2e
+```
+
+## 📊 Monitoring
+
+### Container Health
+
+```powershell
+# Check status
+docker compose ps
+
+# Health checks
+docker compose exec backend curl http://localhost:8000/health
+docker compose exec frontend wget -q -O- http://localhost:80
+```
+
+### Logs
+
+```powershell
+# All services
+docker compose logs -f
+
+# Specific service
+docker compose logs -f backend
+docker compose logs -f frontend
+
+# Tail last 100 lines
+docker compose logs --tail=100 backend
+```
+
+## 🚀 Deployment
+
+### Production Build
+
+```powershell
+# Build production images
+docker compose -f docker-compose.yml build
+
+# Deploy
+docker compose up -d
+
+# Scale (if needed)
+docker compose up -d --scale backend=3
+```
+
+### Environment Variables
+
+Production `.env`:
+```ini
+HOST_GEMINI_DIR=C:\Production\.gemini
+GEMINI_MODEL=gemini-2.5-pro
+GOOGLE_CLOUD_PROJECT=production-project-id
+FRONTEND_PORT=80
+```
+
+## 📦 Data Persistence
+
+Structured documents are saved in Docker volume `backend-data`:
+
+```powershell
+# List volumes
+docker volume ls
+
+# Inspect volume
+docker volume inspect gemini-cli_backend-data
+
+# Backup volume
+docker run --rm -v gemini-cli_backend-data:/data -v ${PWD}:/backup alpine tar czf /backup/data-backup.tar.gz /data
+```
+
+## 🔒 Security
+
+- Non-root user in containers
+- Read-only credential mounting
+- CORS configured for frontend origin
+- No sensitive data in logs
+- Input validation with Pydantic
+- Error sanitization in responses
+
+## 🤝 Contributing
+
+1. Follow SOLID principles
+2. Use async/await for I/O
+3. Add type hints (Python) / strict types (TS)
+4. Write tests for new features
+5. Update documentation
+
+## 📝 License
 
 MIT License
 
-## Автор
+## 👤 Author
 
-Created for structuring unstructured text via Gemini CLI in containerized environment.
+Created for structuring unstructured text via Gemini AI in modern containerized environment.
+
+---
+
+**Version:** 2.0.0  
+**Last Updated:** October 31, 2025
