@@ -1,0 +1,110 @@
+---
+description: Frontend TypeScript standards
+alwaysApply: false
+---
+# TYPESCRIPT STANDARDS
+
+## Project Structure
+```
+frontend/
+├── src/
+│   ├── components/   # React components
+│   ├── services/     # API clients
+│   ├── hooks/        # Custom hooks
+│   ├── types/        # TypeScript types
+│   ├── utils/        # Helpers
+│   └── config/       # Configuration
+├── public/
+└── tests/
+```
+
+## Type Safety
+- Enable `strict` mode in tsconfig.json
+- Use `unknown` instead of `any`
+- Define interfaces for all data structures
+- Use discriminated unions for state
+
+```typescript
+// Good: Discriminated union
+type LoadingState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: Data }
+  | { status: 'error'; error: Error };
+
+// Good: Proper typing
+interface ApiResponse<T> {
+  data: T;
+  status: number;
+  message?: string;
+}
+
+async function fetchData<T>(url: string): Promise<ApiResponse<T>> {
+  // Implementation
+}
+```
+
+## Async Patterns
+- Use async/await consistently
+- Implement proper error boundaries
+- Handle loading states explicitly
+- Use AbortController for cancellable requests
+
+```typescript
+// API client with abort support
+class ApiClient {
+  private controller: AbortController | null = null;
+
+  async fetch<T>(endpoint: string): Promise<T> {
+    this.controller = new AbortController();
+
+    try {
+      const response = await fetch(endpoint, {
+        signal: this.controller.signal
+      });
+      return await response.json();
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.log('Request cancelled');
+      }
+      throw error;
+    }
+  }
+
+  cancel() {
+    this.controller?.abort();
+  }
+}
+```
+
+## Component Patterns
+```typescript
+// Modular component structure
+interface ComponentProps {
+  data: Data;
+  onAction: (id: string) => Promise<void>;
+}
+
+export const Component: React.FC<ComponentProps> = ({ data, onAction }) => {
+  const [loading, setLoading] = useState(false);
+
+  const handleAction = async (id: string) => {
+    setLoading(true);
+    try {
+      await onAction(id);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (/* JSX */);
+};
+```
+
+## Module Organization
+- One component per file
+- Co-locate tests with components
+- Export types separately
+- Use barrel exports (index.ts)

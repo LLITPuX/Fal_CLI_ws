@@ -1,0 +1,111 @@
+---
+description: Backend development standards for FastAPI and FastMCP
+alwaysApply: false
+---
+# FASTAPI STANDARDS
+
+## Project Structure
+```
+backend/
+├── app/
+│   ├── api/          # API endpoints
+│   ├── core/         # Config, dependencies
+│   ├── models/       # Pydantic models
+│   ├── services/     # Business logic
+│   ├── db/           # Database layer
+│   └── utils/        # Helpers
+├── tests/
+└── main.py
+```
+
+## Async Patterns
+- **ALWAYS** use async/await for I/O operations
+- Use `asyncio.gather()` for parallel tasks
+- Implement proper connection pooling
+- Use `asynccontextmanager` for lifespan events
+
+```python
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await init_db_pool()
+    await init_redis_pool()
+    yield
+    # Shutdown
+    await close_db_pool()
+    await close_redis_pool()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+## FastMCP Integration (Experimental)
+- **Note**: FastMCP is experimental, consider using standard FastAPI for production
+- Create modular MCP servers if needed for LLM integration
+- Use async handlers for I/O operations
+- Implement proper error handling with FastAPI patterns
+- Document all tools and prompts
+
+```python
+# Consider using standard FastAPI for production stability
+from fastapi import FastAPI, HTTPException
+from typing import Dict
+
+app = FastAPI(title="Agent API")
+
+@app.post("/tools/search")
+async def search_tool(query: str) -> Dict:
+    """Search tool with proper error handling"""
+    try:
+        # Implementation
+        return {"results": []}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+**Alternative FastMCP (if needed for LLM integration):**
+```python
+from fastmcp import FastMCP
+
+mcp = FastMCP("Service Name")
+
+@mcp.tool()
+async def tool_name(param: str) -> dict:
+    """Clear description of what tool does"""
+    # Implementation
+    pass
+```
+
+## Error Handling
+```python
+from fastapi import HTTPException, status
+
+# Use specific HTTP exceptions
+raise HTTPException(
+    status_code=status.HTTP_404_NOT_FOUND,
+    detail="Resource not found"
+)
+
+# Log errors properly
+import logging
+logger = logging.getLogger(__name__)
+logger.error(f"Error details: {error}", exc_info=True)
+```
+
+## Dependency Injection
+```python
+from fastapi import Depends
+from typing import Annotated
+
+async def get_db_session():
+    async with SessionLocal() as session:
+        yield session
+
+DbSession = Annotated[AsyncSession, Depends(get_db_session)]
+
+@app.get("/items")
+async def get_items(db: DbSession):
+    return await db.execute(select(Item))
+```
