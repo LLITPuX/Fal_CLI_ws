@@ -10,7 +10,7 @@
 - ✅ Послідовна обробка тексту трьома моделями:
   - `gemini-2.5-pro` (найточніша)
   - `gemini-2.5-flash` (збалансована)
-  - `gemini-2.5-flash-light` (найшвидша)
+  - `gemini-1.5-flash-8b` (найшвидша, легка)
 
 ### 2. **Детальні метрики**
 - ⏱️ **Час обробки** кожної моделі (секунди)
@@ -46,7 +46,7 @@ gemini_timeout: int = 300  # 5 хвилин на модель
 gemini_models: list[str] = [
     "gemini-2.5-pro",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-light",
+    "gemini-1.5-flash-8b",
 ]
 ```
 
@@ -227,7 +227,7 @@ docker compose up -d frontend
 ### Орієнтовний час обробки (500 символів):
 - **gemini-2.5-pro**: 30-60 секунд
 - **gemini-2.5-flash**: 10-20 секунд
-- **gemini-2.5-flash-light**: 5-10 секунд
+- **gemini-1.5-flash-8b**: 5-15 секунд
 
 ### Оцінка токенів:
 - Формула: `characters / 4` (приблизно)

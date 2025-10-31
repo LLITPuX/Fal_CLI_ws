@@ -64,7 +64,7 @@ export const TextInput: React.FC<TextInputProps> = ({ onSubmit, isLoading }) => 
             >
               <option value="gemini-2.5-flash">gemini-2.5-flash (Fast)</option>
               <option value="gemini-2.5-pro">gemini-2.5-pro (Accurate)</option>
-              <option value="gemini-2.5-flash-light">gemini-2.5-flash-light (Lightweight)</option>
+              <option value="gemini-1.5-flash-8b">gemini-1.5-flash-8b (Lightweight)</option>
             </select>
           </div>
         </div>

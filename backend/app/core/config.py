@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     gemini_models: list[str] = [
         "gemini-2.5-pro",
         "gemini-2.5-flash",
-        "gemini-2.5-flash-light",
+        "gemini-1.5-flash-8b",  # Lightweight model
     ]
 
     # Storage Settings

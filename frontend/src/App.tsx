@@ -48,7 +48,7 @@ function App() {
                 <p>Processing your text with all Gemini models...</p>
                 <p className="loading-hint">⏱️ This will take up to 15 minutes (5 min per model)</p>
                 <div className="loading-models">
-                  <span>Testing: gemini-2.5-pro → gemini-2.5-flash → gemini-2.5-flash-light</span>
+                  <span>Testing: gemini-2.5-pro → gemini-2.5-flash → gemini-1.5-flash-8b</span>
                 </div>
               </div>
             )}
@@ -67,7 +67,7 @@ function App() {
                 <div className="models-list">
                   <span>📊 gemini-2.5-pro</span>
                   <span>⚡ gemini-2.5-flash</span>
-                  <span>🚀 gemini-2.5-flash-light</span>
+                  <span>🚀 gemini-1.5-flash-8b</span>
                 </div>
               </div>
             )}

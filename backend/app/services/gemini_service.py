@@ -112,7 +112,12 @@ class GeminiService:
             logger.info(
                 f"CLI completed in {processing_time:.2f}s with model {self.model}"
             )
-            logger.debug(f"CLI output: {output[:200]}...")
+            logger.info(f"CLI raw output length: {len(output)} chars")
+            logger.info(f"CLI raw output (first 500 chars): {output[:500]}")
+            if stderr:
+                stderr_text = stderr.decode("utf-8", errors="ignore")
+                if stderr_text.strip():
+                    logger.warning(f"CLI stderr: {stderr_text[:500]}")
             return output, processing_time
 
         except asyncio.TimeoutError:
