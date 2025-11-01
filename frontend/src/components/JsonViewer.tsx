@@ -140,7 +140,6 @@ export const JsonViewer: React.FC<JsonViewerProps> = ({ data }) => {
       <div className="viewer-header">
         <h3>✨ Structured Results</h3>
         <div className="summary-stats">
-          <span className="stat success">✅ {successfulResults.length} model(s)</span>
           {failedResults.length > 0 && (
             <span className="stat error">❌ {failedResults.length} failed</span>
           )}
