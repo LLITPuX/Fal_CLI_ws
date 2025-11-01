@@ -169,6 +169,14 @@ VITE_API_URL=http://localhost:8000
 
 **Rule:** Provide sensible defaults and document all env variables in `.env.example`.
 
+## Layout & Styling Guidelines
+- Preserve readability for long-form content (e.g., raw JSON) by applying `white-space: pre-wrap` and `word-break: break-word` in any scrollable `<pre>`/`<code>` blocks.
+- Prefer responsive wrappers over forcing horizontal scroll for critical text blocks.
+
+## Build Verification
+- Always run `npm run build` (production build) before submitting changes to catch `tsc` warnings, unused symbols, and Vite-specific issues.
+- CI pipelines should execute the same command to guard against regressions introduced by environment variables or tree-shaking.
+
 ## Error Handling in Components
 
 ### Error boundaries
