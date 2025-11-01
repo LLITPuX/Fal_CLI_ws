@@ -218,6 +218,12 @@ settings = Settings()
 
 **Rule:** ALL configuration MUST go through Settings class, never use `os.getenv()` directly in business logic.
 
+### Gemini model configuration
+- `GEMINI_MODEL` serves as the default backend model when a request omits `model`.
+- `GEMINI_MODELS` must be a comma-separated whitelist parsed into a list; validate and normalise it during settings initialisation.
+- Reject requests that reference models outside this whitelist to avoid unexpected CLI calls.
+- Keep `GEMINI_MODELS` synchronised with any frontend selectors and with `VITE_GEMINI_MODEL`.
+
 ### Configuration validation
 ```python
 from pydantic import field_validator
