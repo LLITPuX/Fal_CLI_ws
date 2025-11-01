@@ -132,7 +132,6 @@ const ModelResultCard: React.FC<{ result: ModelResult; index: number }> = ({ res
 };
 
 export const JsonViewer: React.FC<JsonViewerProps> = ({ data }) => {
-  const successfulResults = data.results.filter((r) => !r.error);
   const failedResults = data.results.filter((r) => r.error);
 
   return (
