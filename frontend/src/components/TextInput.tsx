@@ -4,11 +4,17 @@ import type { StructureRequest } from '../types/api';
 interface TextInputProps {
   onSubmit: (request: StructureRequest) => Promise<void>;
   isLoading: boolean;
+  model: string;
+  onModelChange: (model: string) => void;
 }
 
-export const TextInput: React.FC<TextInputProps> = ({ onSubmit, isLoading }) => {
+export const TextInput: React.FC<TextInputProps> = ({
+  onSubmit,
+  isLoading,
+  model,
+  onModelChange,
+}) => {
   const [text, setText] = useState('');
-  const [model, setModel] = useState('gemini-2.5-flash');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -59,7 +65,7 @@ export const TextInput: React.FC<TextInputProps> = ({ onSubmit, isLoading }) => 
             <select
               id="model-select"
               value={model}
-              onChange={(e) => setModel(e.target.value)}
+              onChange={(e) => onModelChange(e.target.value)}
               disabled={isLoading}
             >
               <option value="gemini-2.5-flash">gemini-2.5-flash (Recommended - 15 RPM)</option>
