@@ -55,7 +55,7 @@ class StructureRequest(BaseModel):
 
 
 class MultiModelResponse(BaseModel):
-    """Response with results from all three models."""
+    """Response with results from processed models."""
 
     results: list[ModelResult] = Field(
         ..., description="Results from each model in order"
@@ -63,13 +63,4 @@ class MultiModelResponse(BaseModel):
     total_processing_time_seconds: float = Field(
         ..., description="Total time for all models"
     )
-
-
-# Legacy response for backward compatibility
-class StructureResponse(BaseModel):
-    """Response after successful text structuring."""
-
-    id: str = Field(..., description="Unique identifier for this result")
-    json_path: str = Field(..., description="Path to saved JSON file")
-    data: StructuredDoc = Field(..., description="Structured document data")
 
