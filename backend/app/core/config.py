@@ -3,7 +3,8 @@
 import os
 from typing import Literal
 
-from pydantic_settings import BaseSettings
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -26,15 +27,33 @@ class Settings(BaseSettings):
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     gemini_timeout: int = 300  # seconds (5 minutes per model)
     google_cloud_project: str | None = os.getenv("GOOGLE_CLOUD_PROJECT")
-    
+
     # Gemini models for testing
     # For free tier, use only gemini-2.5-flash to avoid quota limits
     # gemini-2.5-pro has very low RPM (2) and daily limits
-    # gemini-1.5-flash-8b and gemini-2.5-flash-light don't exist
-    gemini_models: list[str] = [
-        "gemini-2.5-flash",  # Best balance: 15 RPM, good quality
-        # "gemini-2.5-pro",  # Uncomment for paid tier only (2 RPM)
-    ]
+    # Provide a comma-separated list via GEMINI_MODELS env var when needed
+    gemini_models: list[str] | str = Field(
+        default_factory=lambda: [
+            "gemini-2.5-flash",  # Best balance: 15 RPM, good quality
+            # "gemini-2.5-pro",  # Uncomment for paid tier only (2 RPM)
+        ]
+    )
+
+    @model_validator(mode="after")
+    def normalize_gemini_models(self) -> "Settings":
+        """Ensure gemini_models is a non-empty list."""
+
+        value = self.gemini_models
+        if isinstance(value, str):
+            models = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            models = list(value)
+
+        if not models:
+            models = ["gemini-2.5-flash"]
+
+        self.gemini_models = models
+        return self
 
     # Storage Settings
     default_output_dir: str = "data"
@@ -42,11 +61,10 @@ class Settings(BaseSettings):
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
-    class Config:
-        """Pydantic config."""
-
-        env_file = ".env"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+    )
 
 
 settings = Settings()
