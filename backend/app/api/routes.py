@@ -12,12 +12,7 @@ from app.core.exceptions import (
     JSONParsingError,
     ValidationException,
 )
-from app.models.schemas import (
-    ModelResult,
-    MultiModelResponse,
-    StructureRequest,
-    StructureResponse,
-)
+from app.models.schemas import ModelResult, MultiModelResponse, StructureRequest
 from app.services.gemini_service import GeminiService
 
 logger = logging.getLogger(__name__)
@@ -39,11 +34,11 @@ async def health_check() -> dict[str, str]:
     "/structure",
     response_model=MultiModelResponse,
     status_code=status.HTTP_200_OK,
-    summary="Structure text with all Gemini models",
-    description="Processes text sequentially with all three Gemini models and returns comparative results",
+    summary="Structure text with Gemini",
+    description="Processes unstructured text using configured Gemini models and returns structured results with metrics",
 )
 async def structure_text(request: StructureRequest) -> MultiModelResponse:
-    """Structure unstructured text using all Gemini models sequentially.
+    """Structure unstructured text using the configured Gemini models sequentially.
 
     Args:
         request: Structure request with text and optional parameters
