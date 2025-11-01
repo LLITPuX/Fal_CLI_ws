@@ -330,3 +330,6 @@ logger.info(f"User logged in: {user.id}")
 ```
 
 **Rule:** NEVER log passwords, tokens, or other sensitive data.
+
+### CLI Debug Logging
+- When debugging integrations with external CLI/API tools, capture and log the complete `stdout` and `stderr` payloads (including any `response` wrappers and markdown formatting) until the issue is resolved.
