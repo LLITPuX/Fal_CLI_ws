@@ -42,13 +42,6 @@ export interface MultiModelResponse {
   total_processing_time_seconds: number;
 }
 
-// Legacy response for backward compatibility
-export interface StructureResponse {
-  id: string;
-  json_path: string;
-  data: StructuredDoc;
-}
-
 export interface ApiError {
   detail: string;
 }
