@@ -109,10 +109,18 @@ notepad .env
 HOST_GEMINI_DIR=C:\Users\YourUser\.gemini
 GEMINI_CLI=gemini
 GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODELS=gemini-2.5-flash
 GOOGLE_CLOUD_PROJECT=your-gcp-project-id
 API_PORT=8000
 FRONTEND_PORT=3000
+VITE_GEMINI_MODEL=gemini-2.5-flash
 ```
+
+> ℹ️ **Model configuration**
+> - `GEMINI_MODEL` — дефолтний бекенд-модель, коли клієнт не передає `model` у запиті.
+> - `GEMINI_MODELS` — список дозволених моделей через кому. Кожне значення має бути валідною моделлю Gemini і збігатися зі списком у UI.
+> - `VITE_GEMINI_MODEL` — модель, попередньо обрана у фронтенді; вона має входити до `GEMINI_MODELS`.
+> - Якщо вмикаєте/вимикаєте моделі, оновлюйте одночасно всі три змінні.
 
 ### 2. Build & Run
 
@@ -233,6 +241,16 @@ npm run dev
 # Or use container
 docker compose exec frontend sh
 ```
+
+### Build Verification
+
+Перед комітом фронтенду обов'язково запускайте продакшн-збірку, щоб зловити `tsc`/Vite-помилки до CI:
+
+```powershell
+npm run build
+```
+
+Цей самий крок варто додати до пайплайнів CI, щоб попереджати про невикористані змінні чи помилки типів до деплою.
 
 ### Hot Reload
 
