@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { TextInput } from './components/TextInput';
 import { JsonViewer } from './components/JsonViewer';
 import { ErrorMessage } from './components/ErrorMessage';
@@ -6,8 +6,18 @@ import { apiClient } from './services/api';
 import type { LoadingState, StructureRequest } from './types/api';
 import './styles/App.css';
 
+const MODEL_HINTS: Record<string, string> = {
+  'gemini-2.5-flash': ' (optimal for free tier)',
+  'gemini-2.5-pro': ' (paid tier only - 2 RPM)',
+};
+
 function App() {
+  const defaultModel = useMemo(
+    () => (import.meta.env.VITE_GEMINI_MODEL as string | undefined) ?? 'gemini-2.5-flash',
+    []
+  );
   const [loadingState, setLoadingState] = useState<LoadingState>({ status: 'idle' });
+  const [selectedModel, setSelectedModel] = useState<string>(defaultModel);
 
   const handleSubmit = async (request: StructureRequest) => {
     setLoadingState({ status: 'loading' });
@@ -38,6 +48,8 @@ function App() {
             <TextInput
               onSubmit={handleSubmit}
               isLoading={loadingState.status === 'loading'}
+              model={selectedModel}
+              onModelChange={setSelectedModel}
             />
           </div>
 
@@ -48,7 +60,10 @@ function App() {
                 <p>Processing your text with Gemini AI...</p>
                 <p className="loading-hint">⏱️ This may take up to 5 minutes</p>
                 <div className="loading-models">
-                  <span>Using: gemini-2.5-flash (optimal for free tier)</span>
+                  <span>
+                    Using: {selectedModel}
+                    {MODEL_HINTS[selectedModel] ?? ''}
+                  </span>
                 </div>
               </div>
             )}
@@ -65,7 +80,10 @@ function App() {
                 <h3>Ready to structure your text</h3>
                 <p>Enter unstructured text to transform it into structured JSON</p>
                 <div className="models-list">
-                  <span>⚡ Powered by gemini-2.5-flash</span>
+                  <span>
+                    ⚡ Powered by {selectedModel}
+                    {MODEL_HINTS[selectedModel] ?? ''}
+                  </span>
                 </div>
               </div>
             )}
