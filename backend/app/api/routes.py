@@ -52,8 +52,29 @@ async def structure_text(request: StructureRequest) -> MultiModelResponse:
     start_time = time.time()
     results: list[ModelResult] = []
 
+    if not settings.gemini_models:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No Gemini models configured on the server",
+        )
+
+    # Determine which models to run
+    if request.model:
+        if request.model not in settings.gemini_models:
+            available = ", ".join(settings.gemini_models)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Model '{request.model}' is not allowed. "
+                    f"Available models: {available}"
+                ),
+            )
+        models_to_run = [request.model]
+    else:
+        models_to_run = settings.gemini_models
+
     # Process with each model sequentially
-    for model in settings.gemini_models:
+    for model in models_to_run:
         logger.info(f"Processing with model: {model}")
         
         try:
