@@ -123,7 +123,15 @@ class FalkorDBClient:
                 for record in result.result_set:
                     row_dict = {}
                     for idx, col_name in enumerate(result.header):
-                        row_dict[col_name] = self._serialize_value(record[idx])
+                        # FalkorDB returns header as [[index, name], ...] 
+                        # Extract the column name (second element) if it's a list
+                        if isinstance(col_name, list) and len(col_name) >= 2:
+                            key = col_name[1]  # Name is at index 1
+                        elif isinstance(col_name, list) and len(col_name) == 1:
+                            key = str(col_name[0])
+                        else:
+                            key = str(col_name)
+                        row_dict[key] = self._serialize_value(record[idx])
                     results.append(row_dict)
             
             logger.debug(
@@ -149,6 +157,14 @@ class FalkorDBClient:
         Returns:
             JSON-serializable value
         """
+        # Handle lists/arrays
+        if isinstance(value, (list, tuple)):
+            return [self._serialize_value(v) for v in value]
+        
+        # Handle dictionaries
+        if isinstance(value, dict):
+            return {k: self._serialize_value(v) for k, v in value.items()}
+        
         # Handle Node objects
         if hasattr(value, 'properties'):
             return {
