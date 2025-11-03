@@ -31,6 +31,13 @@ export const NodeForm = ({ onSubmit, isLoading, availableLabels = [] }: NodeForm
     }
   }, []);
 
+  // Auto-switch to custom mode if no labels available
+  useEffect(() => {
+    if (availableLabels.length === 0 && !useCustomLabel) {
+      setUseCustomLabel(true);
+    }
+  }, [availableLabels.length]);
+
   const addProperty = () => {
     setProperties([
       ...properties,
@@ -71,7 +78,10 @@ export const NodeForm = ({ onSubmit, isLoading, availableLabels = [] }: NodeForm
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const finalLabel = useCustomLabel ? customLabel.trim() : label;
+    // Determine final label based on mode and available options
+    const finalLabel = (hasAvailableLabels && !useCustomLabel) 
+      ? label 
+      : customLabel.trim();
 
     if (!finalLabel) {
       alert('Label is required');
