@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import type { StructureRequest } from '../types/api';
+import { SchemaBuilder } from './SchemaBuilder';
 import { PromptEditor } from './PromptEditor';
 import { TemplateManager } from './TemplateManager';
+import type { VisualSchema } from '../types/schema';
+import { visualSchemaToJSON } from '../utils/schemaConverter';
 
 interface TextInputProps {
   onSubmit: (request: StructureRequest) => Promise<void>;
@@ -18,17 +21,26 @@ export const TextInput: React.FC<TextInputProps> = ({
 }) => {
   const [text, setText] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [customSchema, setCustomSchema] = useState('');
+  const [visualSchema, setVisualSchema] = useState<VisualSchema>({ fields: [] });
   const [showSchemaEditor, setShowSchemaEditor] = useState(false);
+  const [useRawJSON, setUseRawJSON] = useState(false);
+  const [customSchema, setCustomSchema] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!text.trim()) return;
 
+    // Convert visual schema to JSON if using visual editor
+    const schemaJSON = useRawJSON
+      ? customSchema.trim() || undefined
+      : visualSchema.fields.length > 0
+      ? visualSchemaToJSON(visualSchema)
+      : undefined;
+
     await onSubmit({
       text: text.trim(),
       model,
-      customSchema: customSchema.trim() || undefined,
+      customSchema: schemaJSON,
     });
   };
 
@@ -91,17 +103,46 @@ export const TextInput: React.FC<TextInputProps> = ({
 
             {showSchemaEditor && (
               <>
-                <TemplateManager
-                  onSelect={setCustomSchema}
-                  currentSchema={customSchema}
-                  disabled={isLoading}
-                />
-                <PromptEditor
-                  value={customSchema}
-                  onChange={setCustomSchema}
-                  onReset={() => setCustomSchema('')}
-                  disabled={isLoading}
-                />
+                <div className="schema-mode-toggle">
+                  <button
+                    type="button"
+                    onClick={() => setUseRawJSON(false)}
+                    className={`mode-btn ${!useRawJSON ? 'active' : ''}`}
+                    disabled={isLoading}
+                  >
+                    📝 Візуальний редактор
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUseRawJSON(true)}
+                    className={`mode-btn ${useRawJSON ? 'active' : ''}`}
+                    disabled={isLoading}
+                  >
+                    💻 Raw JSON
+                  </button>
+                </div>
+
+                {!useRawJSON ? (
+                  <SchemaBuilder
+                    value={visualSchema}
+                    onChange={setVisualSchema}
+                    disabled={isLoading}
+                  />
+                ) : (
+                  <>
+                    <TemplateManager
+                      onSelect={setCustomSchema}
+                      currentSchema={customSchema}
+                      disabled={isLoading}
+                    />
+                    <PromptEditor
+                      value={customSchema}
+                      onChange={setCustomSchema}
+                      onReset={() => setCustomSchema('')}
+                      disabled={isLoading}
+                    />
+                  </>
+                )}
               </>
             )}
           </div>
