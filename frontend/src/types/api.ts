@@ -25,7 +25,7 @@ export interface ProcessingMetrics {
 export interface ModelResult {
   id: string;
   json_path: string;
-  data: StructuredDoc | null;
+  data: StructuredDoc | Record<string, any> | null;
   metrics: ProcessingMetrics | null;
   error: string | null;
 }
@@ -35,6 +35,7 @@ export interface StructureRequest {
   out_dir?: string;
   cli_command?: string;
   model?: string;
+  customSchema?: string;
 }
 
 export interface MultiModelResponse {

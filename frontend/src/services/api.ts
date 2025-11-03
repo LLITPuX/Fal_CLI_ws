@@ -11,12 +11,21 @@ export class ApiClient {
     this.controller = new AbortController();
 
     try {
+      // Convert customSchema to custom_schema for backend
+      const payload = {
+        text: request.text,
+        model: request.model,
+        out_dir: request.out_dir,
+        cli_command: request.cli_command,
+        custom_schema: request.customSchema,
+      };
+
       const response = await fetch(`${API_BASE_URL}/structure`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify(payload),
         signal: this.controller.signal,
       });
 

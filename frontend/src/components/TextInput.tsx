@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { StructureRequest } from '../types/api';
+import { PromptEditor } from './PromptEditor';
+import { TemplateManager } from './TemplateManager';
 
 interface TextInputProps {
   onSubmit: (request: StructureRequest) => Promise<void>;
@@ -16,6 +18,8 @@ export const TextInput: React.FC<TextInputProps> = ({
 }) => {
   const [text, setText] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [customSchema, setCustomSchema] = useState('');
+  const [showSchemaEditor, setShowSchemaEditor] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,6 +28,7 @@ export const TextInput: React.FC<TextInputProps> = ({
     await onSubmit({
       text: text.trim(),
       model,
+      customSchema: customSchema.trim() || undefined,
     });
   };
 
@@ -71,6 +76,34 @@ export const TextInput: React.FC<TextInputProps> = ({
               <option value="gemini-2.5-flash">gemini-2.5-flash (Recommended - 15 RPM)</option>
               <option value="gemini-2.5-pro">gemini-2.5-pro (Paid tier only - 2 RPM)</option>
             </select>
+          </div>
+
+          <div className="schema-section">
+            <div className="advanced-toggle">
+              <button
+                type="button"
+                onClick={() => setShowSchemaEditor(!showSchemaEditor)}
+                className="toggle-btn"
+              >
+                {showSchemaEditor ? '▼' : '▶'} Користувацька JSON-схема
+              </button>
+            </div>
+
+            {showSchemaEditor && (
+              <>
+                <TemplateManager
+                  onSelect={setCustomSchema}
+                  currentSchema={customSchema}
+                  disabled={isLoading}
+                />
+                <PromptEditor
+                  value={customSchema}
+                  onChange={setCustomSchema}
+                  onReset={() => setCustomSchema('')}
+                  disabled={isLoading}
+                />
+              </>
+            )}
           </div>
         </div>
       )}

@@ -97,28 +97,37 @@ const ModelResultCard: React.FC<{ result: ModelResult; index: number }> = ({ res
       </div>
 
       <div className="data-preview">
-        <div className="preview-card">
-          <h4>{result.data.title}</h4>
-          <p className="date">{result.data.date_iso}</p>
-          <p className="summary">{result.data.summary}</p>
-          <div className="tags">
-            {result.data.tags.map((tag, idx) => (
-              <span key={idx} className="tag">
-                {tag}
-              </span>
-            ))}
-          </div>
-        </div>
+        {'title' in result.data && 'summary' in result.data ? (
+          <>
+            <div className="preview-card">
+              <h4>{result.data.title}</h4>
+              <p className="date">{result.data.date_iso}</p>
+              <p className="summary">{result.data.summary}</p>
+              <div className="tags">
+                {result.data.tags?.map((tag: string, idx: number) => (
+                  <span key={idx} className="tag">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </div>
 
-        <div className="sections">
-          <h5>Sections ({result.data.sections.length})</h5>
-          {result.data.sections.map((section, idx) => (
-            <details key={idx} className="section" open={idx === 0}>
-              <summary>{section.name}</summary>
-              <p>{section.content}</p>
-            </details>
-          ))}
-        </div>
+            <div className="sections">
+              <h5>Sections ({result.data.sections?.length || 0})</h5>
+              {result.data.sections?.map((section: any, idx: number) => (
+                <details key={idx} className="section" open={idx === 0}>
+                  <summary>{section.name}</summary>
+                  <p>{section.content}</p>
+                </details>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="custom-schema-preview">
+            <h5>Користувацька структура</h5>
+            <p className="hint">Дані відповідають вашій схемі. Перегляньте повний JSON нижче.</p>
+          </div>
+        )}
       </div>
 
       <details className="raw-json">
