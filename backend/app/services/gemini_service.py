@@ -40,28 +40,43 @@ class GeminiService:
         self.model = model or settings.gemini_model
         self.timeout = timeout or settings.gemini_timeout
 
-    def build_prompt(self, text: str) -> str:
-        """Build structured prompt for Gemini CLI.
+    def build_prompt(self, text: str, schema: str | None = None) -> str:
+        """Build structured prompt for Gemini CLI with optional custom schema.
 
         Args:
             text: Unstructured text to process
+            schema: Optional custom JSON schema definition
 
         Returns:
             Formatted prompt string
         """
+        default_schema = """
+{
+  "title": "string - A concise, descriptive title extracted from the text",
+  "date_iso": "YYYY-MM-DD - Publication or creation date in ISO 8601 format. Use today's date if not found",
+  "summary": "string - A comprehensive 2-3 sentence summary capturing the main ideas",
+  "tags": ["array of strings - Keywords or topics (3-7 tags). Be specific and relevant"],
+  "sections": [
+    {
+      "name": "string - Section heading or topic name",
+      "content": "string - Full content of this section, preserving important details"
+    }
+  ]
+}
+"""
+        
         return (
-            "You are a strict data structuring service. "
-            "Return ONLY valid JSON matching this structure exactly:\n\n"
-            "{\n"
-            '  "title": "string",\n'
-            '  "date_iso": "YYYY-MM-DD",\n'
-            '  "summary": "string",\n'
-            '  "tags": ["string", ...],\n'
-            '  "sections": [{"name": "string", "content": "string"}, ...]\n'
-            "}\n\n"
-            "No markdown, no explanations, no trailing text. "
-            "If date is missing, use today's date in ISO.\n\n"
-            f"TEXT:\n{text}\n"
+            "You are a professional data structuring service specialized in extracting structured information from text.\n\n"
+            "TASK: Analyze the provided text and extract information into the following JSON structure.\n\n"
+            "OUTPUT SCHEMA (with field descriptions):\n"
+            f"{schema or default_schema}\n\n"
+            "REQUIREMENTS:\n"
+            "- Return ONLY valid JSON, no markdown code blocks, no explanations\n"
+            "- Preserve the original meaning and important details\n"
+            "- Use null for missing optional fields\n"
+            "- Ensure all text is properly escaped for JSON\n"
+            "- Follow the schema structure exactly\n\n"
+            f"INPUT TEXT:\n{text}\n"
         )
 
     async def run_cli(self, prompt: str) -> tuple[str, float]:
@@ -236,18 +251,28 @@ class GeminiService:
 
         return text[start : end + 1]
 
-    def validate_schema(self, data: dict[str, Any]) -> StructuredDoc:
-        """Validate data against StructuredDoc schema.
+    def validate_schema(
+        self, data: dict[str, Any], strict: bool = False
+    ) -> dict[str, Any] | StructuredDoc:
+        """Validate data against StructuredDoc schema or return as-is.
 
         Args:
             data: Dictionary to validate
+            strict: If True, enforce StructuredDoc schema; otherwise return dict
 
         Returns:
-            Validated StructuredDoc instance
+            Validated StructuredDoc instance or raw dict for custom schemas
 
         Raises:
-            ValidationException: If validation fails
+            ValidationException: If strict validation fails
         """
+        if not strict:
+            # Dynamic validation: just ensure it's valid JSON structure
+            if not isinstance(data, dict):
+                raise ValidationException("Parsed data must be a JSON object (dict)")
+            return data
+        
+        # Strict validation against StructuredDoc
         try:
             return StructuredDoc(**data)
         except ValidationError as e:
@@ -281,12 +306,12 @@ class GeminiService:
         )
 
     async def save_result(
-        self, doc: StructuredDoc, output_dir: str | None = None
+        self, doc: StructuredDoc | dict[str, Any], output_dir: str | None = None
     ) -> tuple[str, Path]:
         """Save structured document to JSON file.
 
         Args:
-            doc: Validated structured document
+            doc: Validated structured document or dict
             output_dir: Optional output directory
 
         Returns:
@@ -300,23 +325,31 @@ class GeminiService:
 
         # Atomic write with tmp file
         tmp_path = json_path.with_suffix(".tmp")
-        tmp_path.write_text(
-            json.dumps(doc.model_dump(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        
+        # Handle both StructuredDoc and dict
+        if isinstance(doc, dict):
+            content = json.dumps(doc, ensure_ascii=False, indent=2)
+        else:
+            content = json.dumps(doc.model_dump(), ensure_ascii=False, indent=2)
+        
+        tmp_path.write_text(content, encoding="utf-8")
         tmp_path.replace(json_path)
 
         logger.info(f"Saved result to {json_path}")
         return file_id, json_path
 
     async def structure_text(
-        self, text: str, output_dir: str | None = None
-    ) -> tuple[str, str, StructuredDoc, ProcessingMetrics]:
+        self,
+        text: str,
+        output_dir: str | None = None,
+        custom_schema: str | None = None,
+    ) -> tuple[str, str, StructuredDoc | dict[str, Any], ProcessingMetrics]:
         """Complete workflow: prompt -> CLI -> parse -> validate -> save.
 
         Args:
             text: Unstructured text to process
             output_dir: Optional output directory
+            custom_schema: Optional custom JSON schema
 
         Returns:
             Tuple of (file_id, json_path, structured_doc, metrics)
@@ -326,8 +359,8 @@ class GeminiService:
             JSONParsingError: If parsing fails
             ValidationException: If validation fails
         """
-        # Build prompt
-        prompt = self.build_prompt(text)
+        # Build prompt with optional custom schema
+        prompt = self.build_prompt(text, schema=custom_schema)
 
         # Execute CLI with timing
         raw_output, processing_time = await self.run_cli(prompt)
@@ -335,8 +368,8 @@ class GeminiService:
         # Parse JSON
         parsed_data = self.extract_json(raw_output)
 
-        # Validate schema
-        doc = self.validate_schema(parsed_data)
+        # Validate schema (strict=False for custom schemas)
+        doc = self.validate_schema(parsed_data, strict=(custom_schema is None))
 
         # Save result
         file_id, json_path = await self.save_result(doc, output_dir)

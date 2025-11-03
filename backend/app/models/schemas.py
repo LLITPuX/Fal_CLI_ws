@@ -40,7 +40,9 @@ class ModelResult(BaseModel):
 
     id: str = Field(..., description="Unique identifier for this result")
     json_path: str = Field(..., description="Path to saved JSON file")
-    data: StructuredDoc | None = Field(None, description="Structured document data")
+    data: dict[str, Any] | StructuredDoc | None = Field(
+        None, description="Structured document data (dynamic or typed)"
+    )
     metrics: ProcessingMetrics | None = Field(None, description="Processing metrics")
     error: str | None = Field(None, description="Error message if processing failed")
 
@@ -52,6 +54,9 @@ class StructureRequest(BaseModel):
     out_dir: str | None = Field(None, description="Optional output directory")
     cli_command: str | None = Field(None, description="Optional CLI command override")
     model: str | None = Field(None, description="Optional Gemini model override")
+    custom_schema: str | None = Field(
+        None, description="Optional custom JSON schema for output structure"
+    )
 
 
 class MultiModelResponse(BaseModel):

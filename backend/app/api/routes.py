@@ -84,10 +84,11 @@ async def structure_text(request: StructureRequest) -> MultiModelResponse:
                 model=model,
             )
 
-            # Process text
+            # Process text with optional custom schema
             file_id, json_path, structured_doc, metrics = await service.structure_text(
                 text=request.text,
                 output_dir=request.out_dir,
+                custom_schema=request.custom_schema,
             )
 
             # Add successful result
