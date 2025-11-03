@@ -6,7 +6,11 @@ import { useEffect, useState } from 'react';
 import { falkorDBApi } from '../../services/falkordb-api';
 import type { GraphStats } from '../../types/falkordb';
 
-export const GraphStatsCard = () => {
+interface GraphStatsCardProps {
+  onStatsLoaded?: (stats: GraphStats) => void;
+}
+
+export const GraphStatsCard = ({ onStatsLoaded }: GraphStatsCardProps) => {
   const [stats, setStats] = useState<GraphStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +21,7 @@ export const GraphStatsCard = () => {
     try {
       const data = await falkorDBApi.getStats();
       setStats(data);
+      onStatsLoaded?.(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load stats');
     } finally {

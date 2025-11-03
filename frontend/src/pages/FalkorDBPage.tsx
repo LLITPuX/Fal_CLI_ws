@@ -24,6 +24,8 @@ export const FalkorDBPage = () => {
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [statsKey, setStatsKey] = useState(0); // For forcing stats refresh
+  const [availableLabels, setAvailableLabels] = useState<string[]>([]);
+  const [availableRelationshipTypes, setAvailableRelationshipTypes] = useState<string[]>([]);
 
   const showSuccess = (message: string) => {
     setSuccessMessage(message);
@@ -107,10 +109,19 @@ export const FalkorDBPage = () => {
 
             <div className="tab-content">
               {activeTab === 'node' && (
-                <NodeForm onSubmit={handleCreateNode} isLoading={isLoading} />
+                <NodeForm 
+                  onSubmit={handleCreateNode} 
+                  isLoading={isLoading}
+                  availableLabels={availableLabels}
+                />
               )}
               {activeTab === 'relationship' && (
-                <RelationshipForm onSubmit={handleCreateRelationship} isLoading={isLoading} />
+                <RelationshipForm 
+                  onSubmit={handleCreateRelationship} 
+                  isLoading={isLoading}
+                  availableLabels={availableLabels}
+                  availableRelationshipTypes={availableRelationshipTypes}
+                />
               )}
               {activeTab === 'query' && (
                 <QueryForm onExecute={handleExecuteQuery} isLoading={isLoading} />
@@ -164,7 +175,13 @@ export const FalkorDBPage = () => {
 
           {/* Right sidebar - Statistics */}
           <aside className="falkordb-stats-sidebar">
-            <GraphStatsCard key={statsKey} />
+            <GraphStatsCard 
+              key={statsKey} 
+              onStatsLoaded={(stats) => {
+                setAvailableLabels(stats.labels);
+                setAvailableRelationshipTypes(stats.relationship_types);
+              }}
+            />
           </aside>
         </div>
       </main>
