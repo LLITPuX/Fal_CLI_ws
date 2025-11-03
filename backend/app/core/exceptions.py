@@ -24,3 +24,14 @@ class ValidationException(GeminiServiceException):
 
     pass
 
+
+class DatabaseError(Exception):
+    """Database operation failed."""
+
+    pass
+
+
+class ValidationError(Exception):
+    """Input validation failed."""
+
+    pass

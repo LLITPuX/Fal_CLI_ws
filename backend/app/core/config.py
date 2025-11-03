@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     # Storage Settings
     default_output_dir: str = "data"
 
+    # FalkorDB Settings
+    falkordb_host: str = os.getenv("FALKORDB_HOST", "falkordb")
+    falkordb_port: int = int(os.getenv("FALKORDB_PORT", "6379"))
+    falkordb_graph_name: str = os.getenv("FALKORDB_GRAPH_NAME", "gemini_graph")
+    falkordb_max_query_time: int = int(os.getenv("FALKORDB_MAX_QUERY_TIME", "30"))
+
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 

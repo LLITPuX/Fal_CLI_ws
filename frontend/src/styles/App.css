@@ -31,6 +31,13 @@ body {
   flex-direction: column;
 }
 
+.gemini-page {
+  min-height: calc(100vh - 70px);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
 /* Header */
 .app-header {
   background: linear-gradient(135deg, var(--primary) 0%, #7c3aed 100%);
@@ -591,11 +598,13 @@ textarea {
 
 /* Footer */
 .app-footer {
-  background: var(--bg-card);
+  background: rgba(102, 126, 234, 0.05);
   padding: 1.5rem;
   text-align: center;
-  color: var(--text-secondary);
+  color: #667eea;
   font-size: 0.9rem;
+  border-top: 1px solid rgba(102, 126, 234, 0.1);
+  margin-top: auto;
 }
 
 /* Responsive */
