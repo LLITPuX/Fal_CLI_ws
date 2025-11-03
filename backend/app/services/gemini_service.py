@@ -368,6 +368,19 @@ class GeminiService:
         # Parse JSON
         parsed_data = self.extract_json(raw_output)
 
+        # Inject processing timestamp if field exists in schema
+        from datetime import datetime
+        current_time = datetime.now().strftime("%H:%M:%S")
+        
+        # Add timestamp to common time fields
+        if isinstance(parsed_data, dict):
+            if "time" in parsed_data:
+                parsed_data["time"] = current_time
+            if "processing_time" in parsed_data:
+                parsed_data["processing_time"] = current_time
+            if "timestamp" in parsed_data:
+                parsed_data["timestamp"] = current_time
+
         # Validate schema (strict=False for custom schemas)
         doc = self.validate_schema(parsed_data, strict=(custom_schema is None))
 
