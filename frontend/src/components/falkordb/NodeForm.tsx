@@ -174,7 +174,7 @@ export const NodeForm = ({ onSubmit, isLoading, availableLabels = [] }: NodeForm
         </div>
 
         <div className="properties-list">
-          {properties.map((prop, index) => (
+          {properties.map((prop) => (
             <div key={prop.id} className="property-row">
               <input
                 type="text"
