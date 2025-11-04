@@ -42,21 +42,27 @@ class FalkorDBService:
             ValidationError: If node creation fails
         """
         try:
+            # Add template_id to properties if provided
+            properties = dict(request.properties)
+            if request.template_id:
+                properties["_template_id"] = request.template_id
+            
             # Build properties string
             props_list = [
-                f"{key}: ${key}" for key in request.properties.keys()
+                f"{key}: ${key}" for key in properties.keys()
             ]
             props_str = "{" + ", ".join(props_list) + "}" if props_list else ""
             
             # Cypher query to create node
             cypher = f"CREATE (n:{request.label} {props_str}) RETURN id(n) as node_id"
             
-            results, _ = await self._client.query(cypher, request.properties)
+            results, _ = await self._client.query(cypher, properties)
             
             node_id = str(results[0]["node_id"]) if results else None
             
             logger.info(
                 f"Created node with label '{request.label}', id: {node_id}"
+                + (f", template: {request.template_id}" if request.template_id else "")
             )
             
             return NodeResponse(
