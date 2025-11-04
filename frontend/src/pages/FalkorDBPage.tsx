@@ -3,11 +3,12 @@
  */
 
 import { useState } from 'react';
-import { NodeForm } from '../components/falkordb/NodeForm';
+import { NodeTemplateForm } from '../components/falkordb/NodeTemplateForm';
 import { RelationshipForm } from '../components/falkordb/RelationshipForm';
 import { QueryForm } from '../components/falkordb/QueryForm';
 import { ResultsViewer } from '../components/falkordb/ResultsViewer';
 import { GraphStatsCard } from '../components/falkordb/GraphStatsCard';
+import { TemplateManager } from '../components/falkordb/TemplateManager';
 import { falkorDBApi } from '../services/falkordb-api';
 import type {
   CreateNodeRequest,
@@ -18,9 +19,11 @@ import type {
 } from '../types/falkordb';
 import '../styles/FalkorDB.css';
 
+type ActiveTab = 'node' | 'relationship' | 'query' | 'templates';
+
 export const FalkorDBPage = () => {
   const [state, setState] = useState<FalkorDBState>({ status: 'idle' });
-  const [activeTab, setActiveTab] = useState<'node' | 'relationship' | 'query'>('query');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('query');
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [statsKey, setStatsKey] = useState(0); // For forcing stats refresh
@@ -83,9 +86,15 @@ export const FalkorDBPage = () => {
       </header>
 
       <main className="falkordb-main">
-        <div className="falkordb-layout">
-          {/* Left sidebar - Data Input */}
-          <aside className="falkordb-sidebar">
+        {(activeTab as ActiveTab) === 'templates' ? (
+          // Full-width layout for Templates
+          <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
+            <TemplateManager />
+          </div>
+        ) : (
+          <div className="falkordb-layout">
+            {/* Left sidebar - Data Input */}
+            <aside className="falkordb-sidebar">
             <div className="tab-buttons">
               <button
                 className={`tab-button ${activeTab === 'node' ? 'active' : ''}`}
@@ -105,14 +114,19 @@ export const FalkorDBPage = () => {
               >
                 🔍 Query
               </button>
+              <button
+                className={`tab-button ${(activeTab as ActiveTab) === 'templates' ? 'active' : ''}`}
+                onClick={() => setActiveTab('templates' as ActiveTab)}
+              >
+                📋 Templates
+              </button>
             </div>
 
             <div className="tab-content">
               {activeTab === 'node' && (
-                <NodeForm 
+                <NodeTemplateForm 
                   onSubmit={handleCreateNode} 
                   isLoading={isLoading}
-                  availableLabels={availableLabels}
                 />
               )}
               {activeTab === 'relationship' && (
@@ -183,7 +197,8 @@ export const FalkorDBPage = () => {
               }}
             />
           </aside>
-        </div>
+          </div>
+        )}
       </main>
 
       <footer className="falkordb-footer">
