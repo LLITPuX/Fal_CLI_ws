@@ -140,14 +140,16 @@ class FieldValidation(BaseModel):
 class TemplateField(BaseModel):
     """Definition of a field in a node template."""
     
+    model_config = {"populate_by_name": True}
+    
     id: str = Field(..., description="Unique field ID")
     name: str = Field(..., min_length=1, max_length=100, description="Field name (property key)")
     type: FieldType = Field(..., description="Field type")
     label: str = Field(..., min_length=1, description="Display label for the field")
     required: bool = Field(default=False, description="Whether the field is required")
     placeholder: str | None = Field(default=None, description="Placeholder text")
-    default_value: Any | None = Field(default=None, description="Default value for the field")
-    enum_values: list[str] | None = Field(default=None, description="Possible values for enum type")
+    default_value: Any | None = Field(default=None, description="Default value for the field", alias="defaultValue")
+    enum_values: list[str] | None = Field(default=None, description="Possible values for enum type", alias="enumValues")
     validation: FieldValidation | None = Field(default=None, description="Validation rules")
     
     @field_validator("name")
@@ -162,13 +164,15 @@ class TemplateField(BaseModel):
 class NodeTemplate(BaseModel):
     """Node template definition."""
     
+    model_config = {"populate_by_name": True}
+    
     id: str = Field(..., description="Unique template ID")
     label: str = Field(..., min_length=1, max_length=100, description="Node label")
     icon: str | None = Field(default=None, description="Icon for the template")
     description: str = Field(..., min_length=10, description="Template description")
     fields: list[TemplateField] = Field(..., description="Template fields")
-    created_at: str = Field(..., description="Creation timestamp")
-    updated_at: str = Field(..., description="Last update timestamp")
+    created_at: str = Field(..., description="Creation timestamp", alias="createdAt")
+    updated_at: str = Field(..., description="Last update timestamp", alias="updatedAt")
     
     @field_validator("label")
     @classmethod
