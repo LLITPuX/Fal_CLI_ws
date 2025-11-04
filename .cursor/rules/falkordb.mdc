@@ -1,0 +1,798 @@
+---
+description: FalkorDB integration patterns and best practices based on production experience
+alwaysApply: false
+---
+# FALKORDB INTEGRATION RULES
+
+## Architecture Patterns
+
+### Layer Separation (STRICT)
+```
+┌─────────────────────────────────────────────┐
+│ API Layer (falkordb_routes.py)             │
+│ - HTTP endpoints, request/response models  │
+│ - Error handling → HTTPException           │
+└──────────────┬──────────────────────────────┘
+               │ depends on
+┌──────────────▼──────────────────────────────┐
+│ Service Layer (falkordb_service.py)        │
+│ - Business logic, validation               │
+│ - Domain exceptions (ValidationError)      │
+└──────────────┬──────────────────────────────┘
+               │ depends on
+┌──────────────▼──────────────────────────────┐
+│ Client Layer (db/falkordb/client.py)       │
+│ - Direct FalkorDB interaction              │
+│ - Connection management, query execution   │
+│ - Database exceptions (DatabaseError)      │
+└─────────────────────────────────────────────┘
+```
+
+**NEVER** call FalkorDB client directly from routes - always go through service layer.
+
+---
+
+## FalkorDB Query Result Parsing
+
+### Critical Pattern: Header Format Handling
+
+**PROBLEM:** FalkorDB returns headers as `[[index, name], ...]` NOT `['name']`
+
+```python
+# Example actual response:
+result.header = [[1, 'count'], [2, 'name']]  
+# NOT: ['count', 'name']
+```
+
+**SOLUTION:**
+```python
+def _parse_header(col_name):
+    """Extract column name from FalkorDB header format.
+    
+    FalkorDB returns: [[index, name], ...]
+    We need: name (second element)
+    """
+    if isinstance(col_name, list) and len(col_name) >= 2:
+        return col_name[1]  # Name is at index 1
+    elif isinstance(col_name, list) and len(col_name) == 1:
+        return str(col_name[0])
+    else:
+        return str(col_name)
+
+# In query parsing:
+for idx, col_name in enumerate(result.header):
+    key = _parse_header(col_name)
+    row_dict[key] = serialize_value(record[idx])
+```
+
+**NEVER** assume `col_name` is a string - always check if it's a list first!
+
+---
+
+## Value Serialization
+
+### Recursive Serialization Pattern
+
+FalkorDB returns complex objects that need recursive serialization:
+
+```python
+def _serialize_value(self, value: Any) -> Any:
+    """Serialize FalkorDB value to JSON-compatible format.
+    
+    Order matters! Check in this sequence:
+    1. Lists/tuples (before objects with properties)
+    2. Dictionaries
+    3. Node objects (has 'properties')
+    4. Edge objects (has 'relation')
+    5. Path objects (has 'nodes' and 'edges')
+    6. Primitives
+    """
+    # 1. Handle lists/arrays FIRST
+    if isinstance(value, (list, tuple)):
+        return [self._serialize_value(v) for v in value]
+    
+    # 2. Handle dictionaries
+    if isinstance(value, dict):
+        return {k: self._serialize_value(v) for k, v in value.items()}
+    
+    # 3. Handle Node objects
+    if hasattr(value, 'properties'):
+        return {
+            'id': getattr(value, 'id', None),
+            'label': getattr(value, 'label', None),
+            'properties': dict(value.properties) if value.properties else {}
+        }
+    
+    # 4. Handle Edge/Relationship objects
+    if hasattr(value, 'relation'):
+        return {
+            'type': getattr(value, 'relation', None),
+            'properties': dict(value.properties) if hasattr(value, 'properties') else {}
+        }
+    
+    # 5. Handle Path objects
+    if hasattr(value, 'nodes') and hasattr(value, 'edges'):
+        return {
+            'nodes': [self._serialize_value(n) for n in value.nodes()],
+            'edges': [self._serialize_value(e) for e in value.edges()]
+        }
+    
+    # 6. Primitives
+    return value
+```
+
+**WHY ORDER MATTERS:** 
+- Lists can have `properties` attribute in some contexts
+- Check primitive types BEFORE hasattr checks
+
+---
+
+## Async Execution Pattern
+
+### Sync to Async Wrapper
+
+FalkorDB Python SDK is **synchronous**. Use executor pattern:
+
+```python
+import asyncio
+from typing import Any
+
+class FalkorDBClient:
+    async def query(self, cypher: str, params: dict = None) -> tuple[list[dict], float]:
+        """Execute query asynchronously."""
+        loop = asyncio.get_event_loop()
+        
+        # Run sync operation in executor with timeout
+        result = await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                lambda: self._graph.query(cypher, params or {})
+            ),
+            timeout=self._max_query_time
+        )
+        
+        return self._parse_results(result)
+```
+
+**NEVER** use `sync_to_async` or threading - always use `run_in_executor`.
+
+---
+
+## Frontend UI Patterns
+
+### Typed Property Editor (NOT JSON textarea)
+
+**BAD - Old Approach:**
+```tsx
+<textarea 
+  value={JSON.stringify(properties)}
+  onChange={(e) => setProperties(JSON.parse(e.target.value))}
+/>
+```
+
+**GOOD - Typed Editor:**
+```tsx
+interface PropertyField {
+  id: string;
+  key: string;
+  value: string;
+  type: 'string' | 'number' | 'boolean';
+}
+
+// Editor with Type dropdown
+<select value={prop.type}>
+  <option value="string">Text</option>
+  <option value="number">Number</option>
+  <option value="boolean">Boolean</option>
+</select>
+
+// Value parsing
+const parseValue = (value: string, type: PropertyField['type']) => {
+  switch (type) {
+    case 'number':
+      const num = parseFloat(value);
+      return isNaN(num) ? value : num;
+    case 'boolean':
+      return value.toLowerCase() === 'true';
+    default:
+      return value;
+  }
+};
+```
+
+**WHY:** Better UX, type safety, prevents JSON syntax errors.
+
+---
+
+### Smart Dropdowns from Stats
+
+**Pattern: Stats → Dropdowns Integration**
+
+```tsx
+// 1. Parent fetches stats
+const [availableLabels, setAvailableLabels] = useState<string[]>([]);
+const [availableRelTypes, setAvailableRelTypes] = useState<string[]>([]);
+
+<GraphStatsCard 
+  onStatsLoaded={(stats) => {
+    setAvailableLabels(stats.labels);
+    setAvailableRelTypes(stats.relationship_types);
+  }}
+/>
+
+// 2. Forms receive and use them
+<NodeForm availableLabels={availableLabels} />
+<RelationshipForm 
+  availableLabels={availableLabels}
+  availableRelationshipTypes={availableRelTypes}
+/>
+
+// 3. Forms show dropdown OR custom input
+const hasAvailableLabels = availableLabels.length > 0;
+
+{hasAvailableLabels ? (
+  <select value={label}>
+    <option value="">Select...</option>
+    {availableLabels.map(l => <option key={l} value={l}>{l}</option>)}
+  </select>
+) : (
+  <input type="text" placeholder="Person, Company..." />
+)}
+```
+
+**Auto-switch to custom mode when empty:**
+```tsx
+useEffect(() => {
+  if (availableLabels.length === 0 && !useCustomLabel) {
+    setUseCustomLabel(true);
+  }
+}, [availableLabels.length]);
+```
+
+---
+
+## Cypher Query Best Practices
+
+### Parameterized Queries (ALWAYS)
+
+**BAD - SQL Injection Risk:**
+```python
+cypher = f"CREATE (n:Person {{name: '{user_input}'}})"  # DANGEROUS!
+```
+
+**GOOD - Parameterized:**
+```python
+cypher = "CREATE (n:Person {name: $name})"
+params = {"name": user_input}
+result = await client.query(cypher, params)
+```
+
+### Property Matching Pattern
+
+```python
+def _build_match_properties(properties: dict[str, Any], prefix: str) -> str:
+    """Build property match string for MATCH clause.
+    
+    Example:
+        properties = {"name": "Alice", "age": 25}
+        prefix = "from"
+        
+        Returns: "{name: $from_name, age: $from_age}"
+    """
+    if not properties:
+        return ""
+    
+    props_list = [f"{key}: ${prefix}_{key}" for key in properties.keys()]
+    return "{" + ", ".join(props_list) + "}"
+
+# Usage in relationship creation:
+cypher = f"""
+MATCH (from:{from_label} {build_match_properties(from_props, "from")})
+MATCH (to:{to_label} {build_match_properties(to_props, "to")})
+CREATE (from)-[r:{rel_type}]->(to)
+"""
+
+params = {
+    **{f"from_{k}": v for k, v in from_props.items()},
+    **{f"to_{k}": v for k, v in to_props.items()},
+}
+```
+
+---
+
+## Error Handling Strategy
+
+### Domain-Specific Exceptions
+
+```python
+# core/exceptions.py
+class DatabaseError(Exception):
+    """FalkorDB-related errors"""
+    pass
+
+class ValidationError(Exception):
+    """Business logic validation failures"""
+    pass
+
+# Client layer - raise DatabaseError
+try:
+    result = self._graph.query(cypher, params)
+except Exception as e:
+    raise DatabaseError(f"Query failed: {str(e)}")
+
+# Service layer - raise ValidationError  
+try:
+    stats = await self._client.get_stats()
+except DatabaseError as e:
+    raise ValidationError(f"Stats retrieval failed: {str(e)}")
+
+# API layer - convert to HTTPException
+@router.get("/stats")
+async def get_stats(service: FalkorDBServiceDep):
+    try:
+        return await service.get_graph_stats()
+    except ValidationError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+**Layer responsibilities:**
+- **Client:** DatabaseError (connection, query execution)
+- **Service:** ValidationError (business rules)
+- **API:** HTTPException (HTTP status codes)
+
+---
+
+## Connection Management
+
+### Singleton Client Pattern
+
+```python
+# Global client instance
+_falkordb_client: FalkorDBClient | None = None
+
+def get_falkordb_client() -> FalkorDBClient:
+    """Dependency for FastAPI routes."""
+    if _falkordb_client is None:
+        raise DatabaseError("FalkorDB client not initialized")
+    return _falkordb_client
+
+# Lifespan initialization
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await init_falkordb_client()
+    yield
+    # Shutdown
+    await close_falkordb_client()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+**NEVER** create new FalkorDB connections per request - use singleton!
+
+---
+
+## Security & Validation
+
+### Label/Type Validation
+
+```python
+from pydantic import field_validator, Field
+
+class CreateNodeRequest(BaseModel):
+    label: str = Field(..., min_length=1, max_length=100)
+    properties: dict[str, Any] = Field(default_factory=dict)
+    
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, v: str) -> str:
+        """Validate label format."""
+        # Only alphanumeric and underscore
+        if not v.replace("_", "").isalnum():
+            raise ValueError("Label must contain only alphanumeric and underscore")
+        return v
+```
+
+### Query Length Limits
+
+```python
+class QueryRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=5000)
+    params: dict[str, Any] = Field(default_factory=dict)
+    
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, v: str) -> str:
+        """Validate query doesn't contain dangerous operations."""
+        dangerous = ["DELETE", "DROP", "REMOVE"]
+        upper_query = v.upper()
+        
+        for op in dangerous:
+            if op in upper_query:
+                raise ValueError(f"Operation {op} is not allowed")
+        
+        return v
+```
+
+---
+
+## Testing Patterns
+
+### Mock FalkorDB Client
+
+```python
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+@pytest.fixture
+def mock_falkordb_client():
+    """Mock FalkorDB client for testing."""
+    client = AsyncMock()
+    
+    # Mock query response
+    client.query.return_value = (
+        [{"count": 5}],  # Results
+        12.5  # Execution time
+    )
+    
+    # Mock stats response
+    client.get_stats.return_value = {
+        "node_count": 10,
+        "edge_count": 15,
+        "labels": ["Person", "Company"],
+        "relationship_types": ["WORKS_AT"],
+        "graph_name": "test_graph"
+    }
+    
+    return client
+
+@pytest.mark.asyncio
+async def test_create_node(mock_falkordb_client):
+    service = FalkorDBService(mock_falkordb_client)
+    
+    request = CreateNodeRequest(
+        label="Person",
+        properties={"name": "Alice", "age": 25}
+    )
+    
+    response = await service.create_node(request)
+    
+    assert response.success is True
+    mock_falkordb_client.query.assert_called_once()
+```
+
+---
+
+## Frontend State Management
+
+### Form State Pattern for Complex Forms
+
+```tsx
+// Relationship form has 3 sections: from/relationship/to
+// Each section has: label selection + properties
+
+interface PropertyField {
+  id: string;  // Unique ID for React key
+  key: string;
+  value: string;
+  type: 'string' | 'number' | 'boolean';
+}
+
+// Separate state for each section
+const [fromProperties, setFromProperties] = useState<PropertyField[]>([]);
+const [toProperties, setToProperties] = useState<PropertyField[]>([]);
+const [relationshipProperties, setRelationshipProperties] = useState<PropertyField[]>([]);
+
+// Generic property management functions
+const addProperty = (
+  setter: React.Dispatch<React.SetStateAction<PropertyField[]>>, 
+  prefix: string
+) => {
+  setter(prev => [
+    ...prev,
+    { id: `${prefix}-${Date.now()}`, key: '', value: '', type: 'string' }
+  ]);
+};
+
+const updateProperty = (
+  setter: React.Dispatch<React.SetStateAction<PropertyField[]>>,
+  id: string,
+  field: 'key' | 'value' | 'type',
+  value: string
+) => {
+  setter(prev => prev.map(p => 
+    p.id === id ? { ...p, [field]: value } : p
+  ));
+};
+```
+
+### Label Mode Toggle Pattern
+
+```tsx
+// Dual mode: existing (dropdown) vs custom (input)
+const [label, setLabel] = useState('');           // For dropdown
+const [customLabel, setCustomLabel] = useState(''); // For input
+const [useCustomLabel, setUseCustomLabel] = useState(false);
+
+// Auto-switch when no options available
+useEffect(() => {
+  if (availableLabels.length === 0 && !useCustomLabel) {
+    setUseCustomLabel(true);
+  }
+}, [availableLabels.length]);
+
+// Submit logic
+const finalLabel = (hasAvailableLabels && !useCustomLabel) 
+  ? label 
+  : customLabel.trim();
+```
+
+**LESSON LEARNED:** Auto-switch prevents user confusion when graph is empty.
+
+---
+
+## Performance Optimization
+
+### Stats Refresh Strategy
+
+**Problem:** Stats reload on every node/relationship creation can be slow.
+
+**Solution:** Key-based refresh
+```tsx
+const [statsKey, setStatsKey] = useState(0);
+
+// On successful operation
+const showSuccess = (message: string) => {
+  setSuccessMessage(message);
+  setStatsKey(prev => prev + 1);  // Force stats refresh
+};
+
+// Stats component with key prop
+<GraphStatsCard 
+  key={statsKey}  // New key forces remount
+  onStatsLoaded={handleStatsLoaded}
+/>
+```
+
+### Debounced Stats Updates
+
+For high-frequency operations, debounce stats:
+```tsx
+const debouncedRefresh = useMemo(
+  () => debounce(() => setStatsKey(prev => prev + 1), 1000),
+  []
+);
+```
+
+---
+
+## Common Pitfalls & Solutions
+
+### 1. Empty Property Arrays
+
+**Problem:** Form breaks if properties array is empty.
+
+**Solution:** Always initialize with one empty field
+```tsx
+useEffect(() => {
+  if (properties.length === 0) {
+    addProperty();
+  }
+}, []);
+```
+
+### 2. Boolean Type Input
+
+**Problem:** Text input for boolean values causes confusion.
+
+**Solution:** Use dropdown for boolean type
+```tsx
+{prop.type === 'boolean' ? (
+  <select value={prop.value}>
+    <option value="">Select...</option>
+    <option value="true">True</option>
+    <option value="false">False</option>
+  </select>
+) : (
+  <input type={prop.type === 'number' ? 'number' : 'text'} />
+)}
+```
+
+### 3. Relationship Type Case Sensitivity
+
+**Problem:** FalkorDB stores relationship types in UPPERCASE.
+
+**Solution:** Auto-convert to uppercase
+```tsx
+const finalRelType = customRelType.trim().toUpperCase();
+```
+
+---
+
+## API Response Patterns
+
+### Consistent Response Structure
+
+```python
+# Node creation response
+class NodeResponse(BaseModel):
+    success: bool
+    node_id: str | None
+    label: str
+    properties: dict[str, Any]
+    message: str = "Node created successfully"
+
+# Query response with metrics
+class QueryResponse(BaseModel):
+    success: bool
+    results: list[dict[str, Any]]
+    row_count: int
+    execution_time_ms: float
+    message: str = "Query executed successfully"
+```
+
+**Always include:**
+- `success` flag
+- Execution metrics
+- Human-readable `message`
+
+---
+
+## Logging Strategy
+
+### Structured Logging
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+# INFO level for business events
+logger.info(f"Created node with label '{label}', id: {node_id}")
+logger.info(f"Query executed: {len(results)} rows in {time:.2f}ms")
+
+# DEBUG for technical details
+logger.debug(f"Query: {cypher[:100]}...")
+logger.debug(f"Params: {params}")
+
+# ERROR with full context
+logger.error(f"Query execution failed: {e}", exc_info=True)
+```
+
+**NEVER** log sensitive data (user credentials, full properties).
+
+---
+
+## Configuration Best Practices
+
+### Environment Variables
+
+```python
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    # FalkorDB Settings
+    falkordb_host: str = os.getenv("FALKORDB_HOST", "falkordb")
+    falkordb_port: int = int(os.getenv("FALKORDB_PORT", "6379"))
+    falkordb_graph_name: str = os.getenv("FALKORDB_GRAPH_NAME", "gemini_graph")
+    falkordb_max_query_time: int = int(os.getenv("FALKORDB_MAX_QUERY_TIME", "30"))
+```
+
+**Required in .env:**
+```ini
+FALKORDB_HOST=falkordb
+FALKORDB_PORT=6379
+FALKORDB_GRAPH_NAME=gemini_graph
+FALKORDB_MAX_QUERY_TIME=30
+```
+
+---
+
+## Docker Integration
+
+### Health Check for FalkorDB
+
+```yaml
+falkordb:
+  image: falkordb/falkordb:latest
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]  # FalkorDB uses Redis protocol
+    interval: 10s
+    timeout: 5s
+    retries: 5
+```
+
+### Backend Dependency
+
+```yaml
+backend:
+  depends_on:
+    falkordb:
+      condition: service_healthy  # Wait for FalkorDB to be ready
+```
+
+**NEVER** start backend without waiting for FalkorDB health check.
+
+---
+
+## Migration & Data Management
+
+### Graph Schema Evolution
+
+When adding new node types or relationships:
+
+1. **Don't** drop existing data
+2. **Do** use MERGE instead of CREATE for idempotency
+3. **Do** validate before migration
+
+```cypher
+-- Safe migration: add new property to existing nodes
+MATCH (p:Person)
+WHERE NOT EXISTS(p.email)
+SET p.email = "unknown@example.com"
+```
+
+### Backup Strategy
+
+```bash
+# Export graph data
+docker exec gemini-falkordb redis-cli SAVE
+
+# Copy RDB file from container
+docker cp gemini-falkordb:/data/dump.rdb ./backup/
+
+# Restore
+docker cp ./backup/dump.rdb gemini-falkordb:/data/
+docker compose restart falkordb
+```
+
+---
+
+## Lessons Learned (Production Experience)
+
+### 1. Header Format Confusion
+**Issue:** Assumed header is `['name']`, but FalkorDB returns `[[index, 'name']]`
+**Fix:** Always extract `col_name[1]` for column name
+**Impact:** CRITICAL - breaks all queries without this
+
+### 2. Serialization Order
+**Issue:** `hasattr(list, 'properties')` can be true in edge cases
+**Fix:** Check `isinstance(value, list)` BEFORE hasattr checks
+**Impact:** Prevents occasional serialization bugs
+
+### 3. Empty Graph UX
+**Issue:** User confused when no labels available for dropdown
+**Fix:** Auto-switch to custom input mode when graph is empty
+**Impact:** Better first-time user experience
+
+### 4. Relationship Type Naming
+**Issue:** Users entered lowercase, FalkorDB stores uppercase
+**Fix:** Auto-convert to uppercase in frontend
+**Impact:** Consistent naming, better stats aggregation
+
+### 5. Property Type Confusion
+**Issue:** JSON textarea allowed invalid JSON, hard to debug
+**Fix:** Typed property editor with dropdown for type selection
+**Impact:** Zero JSON syntax errors, better data quality
+
+---
+
+## Quick Reference Checklist
+
+**When adding FalkorDB to new project:**
+- [ ] Use singleton client pattern with lifespan management
+- [ ] Implement `_serialize_value` with list handling FIRST
+- [ ] Extract `col_name[1]` from headers (not `col_name[0]`)
+- [ ] Use `run_in_executor` for all sync FalkorDB calls
+- [ ] Add timeout to all queries (default 30s)
+- [ ] Implement typed property editor (not JSON textarea)
+- [ ] Add smart dropdowns from stats
+- [ ] Validate labels/types (alphanumeric + underscore)
+- [ ] Use parameterized queries (never f-strings with user input)
+- [ ] Add health checks with `condition: service_healthy`
+
+---
+
+**Version:** 2.2.0  
+**Last Updated:** November 3, 2025  
+**Status:** Production-ready patterns
