@@ -60,7 +60,7 @@ class TemplateService:
                 "label": request.label,
                 "icon": request.icon,
                 "description": request.description,
-                "fields": [field.model_dump() for field in request.fields],
+                "fields": [field.model_dump(by_alias=True) for field in request.fields],
                 "created_at": now,
                 "updated_at": now,
             }
@@ -205,13 +205,13 @@ class TemplateService:
                 raise ValidationError(f"Template with id '{template_id}' not found")
 
             # Update fields
-            updated_data = existing.model_dump()
+            updated_data = existing.model_dump(by_alias=True)
             if request.icon is not None:
                 updated_data["icon"] = request.icon
             if request.description is not None:
                 updated_data["description"] = request.description
             if request.fields is not None:
-                updated_data["fields"] = [field.model_dump() for field in request.fields]
+                updated_data["fields"] = [field.model_dump(by_alias=True) for field in request.fields]
 
             updated_data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -391,7 +391,7 @@ class TemplateService:
         """
         try:
             templates = await self.list_templates()
-            return [template.model_dump() for template in templates]
+            return [template.model_dump(by_alias=True) for template in templates]
 
         except Exception as e:
             logger.error(f"Failed to export templates: {e}", exc_info=True)
