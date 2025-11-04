@@ -9,6 +9,7 @@ export interface NodeProperties {
 export interface CreateNodeRequest {
   label: string;
   properties: NodeProperties;
+  template_id?: string;
 }
 
 export interface NodeResponse {
