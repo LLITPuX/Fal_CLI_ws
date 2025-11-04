@@ -3,14 +3,25 @@
 Модерний full-stack застосунок для перетворення неструктурованого тексту у структурований JSON за допомогою Google Gemini AI.
 
 ## Можливості
+
+### Gemini Text Structurer
 - **Візуальний конструктор JSON-схем** — створюйте та редагуйте структуру без ризику синтаксичних помилок
 - **Атомарне редагування полів** — додавайте/змінюйте/видаляйте окремі поля через зручні форми
 - **Збереження шаблонів** — зберігайте улюблені схеми та швидко завантажуйте їх
 - **Вибір моделі Gemini** — перемикання між flash (15 RPM) та pro (2 RPM) моделями
 - **Автоматичні timestamp** — поля `time`, `timestamp`, `processing_time` заповнюються часом обробки
 - **Динамічна валідація** — підтримка користувацьких схем поряд зі стандартною структурою
+
+### FalkorDB Graph Database
+- **Створення вузлів (Nodes)** — typed property editor з підтримкою string/number/boolean
+- **Створення зв'язків (Relationships)** — візуальна форма для графових зв'язків
+- **Cypher запити** — повна підтримка Cypher Query Language з прикладами
+- **Статистика графа** — real-time метрики (nodes, edges, labels, relationship types)
+- **Smart dropdowns** — автоматичне заповнення існуючих labels та relationship types
+
+### Технології
 - **Асинхронний FastAPI backend** — повністю async, модульна архітектура
-- **Контейнеризація Docker Compose** — готове production-рішення
+- **Контейнеризація Docker Compose** — готове production-рішення з FalkorDB
 
 ## Архітектура
 
@@ -19,10 +30,17 @@
 │   Frontend      │  HTTP   │     Backend      │  CLI    │  Gemini AI     │
 │   (React+TS)    │────────▶│    (FastAPI)     │────────▶│  (Google)      │
 │   Port: 3000    │         │    Port: 8000    │         │                │
-└─────────────────┘         └──────────────────┘         └────────────────┘
+└─────────────────┘         └────────┬─────────┘         └────────────────┘
         │                            │
-        │    Nginx Reverse Proxy     │
-        └────────────────────────────┘
+        │                            ▼
+        │                   ┌─────────────────┐
+        │                   │    FalkorDB     │
+        │                   │  Graph Database │
+        │                   │   Port: 6379    │
+        │                   └─────────────────┘
+        │
+        │    Nginx Reverse Proxy
+        └────────────────────────────
 ```
 
 ## Технологічний стек
@@ -215,7 +233,6 @@ Invoke-RestMethod -Uri http://localhost:3000/api/structure `
 
 ```powershell
 docker compose exec backend bash
-pytest  # коли тести будуть додані
 docker compose logs -f backend
 ```
 
@@ -238,23 +255,6 @@ npm run build
 ```
 
 Цей самий крок рекомендується додати в CI, щоб виявляти `tsc`/Vite-помилки та невикористані символи.
-
-## Тестування
-
-**Backend**
-
-```bash
-pytest backend/tests/
-pytest backend/tests/integration/
-pytest --cov=app --cov-report=html
-```
-
-**Frontend**
-
-```bash
-npm test
-npm run test:e2e
-```
 
 ## Усунення несправностей
 
@@ -327,5 +327,5 @@ MIT License
 
 ---
 
-**Версія:** 2.0.0  
-**Останнє оновлення:** 1 листопада 2025 року
+**Версія:** 2.2.0  
+**Останнє оновлення:** 3 листопада 2025 року

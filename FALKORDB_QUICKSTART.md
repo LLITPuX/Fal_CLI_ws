@@ -44,35 +44,41 @@ http://localhost:3000
 ### Створіть ваш перший вузол
 
 1. На сторінці FalkorDB виберіть таб **"📍 Node"**
-2. Введіть:
-   - **Label**: `Person`
-   - **Properties**:
-   ```json
-   {"name": "Alice", "age": 25, "city": "Kyiv"}
-   ```
-3. Натисніть **"Create Node"**
+2. Введіть **Label**: `Person`
+3. Додайте **Properties** (натискайте **+ Add** для кожної властивості):
+   - Key: `name`, Type: **Text**, Value: `Alice`
+   - Key: `age`, Type: **Number**, Value: `25`
+   - Key: `city`, Type: **Text**, Value: `Kyiv`
+4. Натисніть **"Create Node"**
+
+✅ Праворуч у статистиці побачите: **1 Node**, **1 Label** (Person)
 
 ### Створіть другий вузол
 
-1. Введіть:
-   - **Label**: `Person`
-   - **Properties**:
-   ```json
-   {"name": "Bob", "age": 30, "city": "Lviv"}
-   ```
-2. Натисніть **"Create Node"**
+1. Введіть **Label**: `Person` (тепер можна вибрати з dropdown)
+2. Додайте **Properties**:
+   - Key: `name`, Type: **Text**, Value: `Bob`
+   - Key: `age`, Type: **Number**, Value: `30`
+   - Key: `city`, Type: **Text**, Value: `Lviv`
+3. Натисніть **"Create Node"**
+
+✅ Статистика: **2 Nodes**, **1 Label**
 
 ### Створіть зв'язок
 
 1. Перейдіть на таб **"🔗 Relationship"**
-2. Заповніть форму:
-   - **From Label**: `Person`
-   - **From Properties**: `{"name": "Alice"}`
-   - **Relationship Type**: `KNOWS`
-   - **To Label**: `Person`
-   - **To Properties**: `{"name": "Bob"}`
-   - **Relationship Properties**: `{"since": 2020}` (опціонально)
-3. Натисніть **"Create Relationship"**
+2. Заповніть **📍 From Node**:
+   - Label: `Person` (виберіть з dropdown)
+   - Properties: Key: `name`, Type: **Text**, Value: `Alice`
+3. Заповніть **🔗 Relationship**:
+   - Type: `KNOWS` (введіть custom або виберіть existing якщо є)
+   - Properties (опціонально): Key: `since`, Type: **Number**, Value: `2020`
+4. Заповніть **📍 To Node**:
+   - Label: `Person` (виберіть з dropdown)
+   - Properties: Key: `name`, Type: **Text**, Value: `Bob`
+5. Натисніть **"Create Relationship"**
+
+✅ Статистика: **1 Relationship**, **1 Relation Type** (KNOWS)
 
 ### Виконайте запит
 
