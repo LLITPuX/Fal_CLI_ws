@@ -363,7 +363,14 @@ export const TemplateEditor = ({ template, onClose, onSave }: TemplateEditorProp
 
                       {field.type === 'enum' && (
                         <div className="form-group field-designer-item-body-full">
-                          <label>Enum Values *</label>
+                          <label>
+                            Enum Values * 
+                            {field.enumValues && field.enumValues.length > 0 && (
+                              <span style={{ color: '#10b981', marginLeft: '0.5rem', fontSize: '0.9rem' }}>
+                                ({field.enumValues.filter(v => v.trim()).length} values)
+                              </span>
+                            )}
+                          </label>
                           <div className="enum-values-editor">
                             {(field.enumValues || []).map((value, valueIndex) => (
                               <div key={valueIndex} className="enum-value-item">
@@ -392,6 +399,9 @@ export const TemplateEditor = ({ template, onClose, onSave }: TemplateEditorProp
                               + Add Value
                             </button>
                           </div>
+                          <small style={{ color: 'var(--text-secondary)', marginTop: '0.5rem', display: 'block' }}>
+                            Додайте мінімум одне значення для випадаючого списку. Порожні значення будуть автоматично видалені при збереженні.
+                          </small>
                         </div>
                       )}
                     </div>
