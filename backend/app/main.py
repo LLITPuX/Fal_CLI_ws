@@ -8,8 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import router
 from app.api.falkordb_routes import router as falkordb_router
+from app.api.template_routes import router as template_router
 from app.core.config import settings
 from app.db.falkordb.client import close_falkordb_client, init_falkordb_client
+from app.services.template_loader import load_default_templates
 
 # Configure logging
 logging.basicConfig(
@@ -35,11 +37,14 @@ async def lifespan(app: FastAPI):
     
     # Initialize FalkorDB
     try:
-        await init_falkordb_client()
+        client = await init_falkordb_client()
         logger.info(
             f"FalkorDB initialized: {settings.falkordb_host}:"
             f"{settings.falkordb_port}/{settings.falkordb_graph_name}"
         )
+        
+        # Load default templates
+        await load_default_templates(client)
     except Exception as e:
         logger.error(f"Failed to initialize FalkorDB: {e}", exc_info=True)
         logger.warning("Continuing without FalkorDB support")
@@ -72,6 +77,7 @@ app.add_middleware(
 # Include routers
 app.include_router(router, tags=["gemini"])
 app.include_router(falkordb_router, prefix="/api")
+app.include_router(template_router, prefix="/api")
 
 # Root endpoint
 @app.get("/", tags=["root"])
