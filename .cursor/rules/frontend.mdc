@@ -109,6 +109,71 @@ export const Component: React.FC<ComponentProps> = ({ data, onAction }) => {
 - Export types separately
 - Use barrel exports (index.ts)
 
+### Component Modularity
+
+**Pattern:** Split large features into reusable sub-components
+
+```
+feature/
+├── MainForm.tsx           # Main component
+├── fields/                # Sub-components by type
+│   ├── TextField.tsx
+│   ├── NumberField.tsx
+│   ├── EnumField.tsx
+│   └── FieldRenderer.tsx  # Dynamic dispatcher
+├── Editor.tsx             # Related component
+└── Manager.tsx            # Management UI
+```
+
+**Real Example from Template System:**
+
+```
+components/falkordb/
+├── NodeTemplateForm.tsx       # Main form - uses TemplateFieldRenderer
+├── TemplateEditor.tsx         # Template creation/editing
+├── TemplateManager.tsx        # Template management UI
+└── fields/                    # 10 isolated field components
+    ├── FieldWrapper.tsx       # Common wrapper
+    ├── TextField.tsx
+    ├── LongTextField.tsx
+    ├── NumberField.tsx
+    ├── BooleanField.tsx
+    ├── EnumField.tsx
+    ├── DateField.tsx
+    ├── UrlField.tsx
+    ├── EmailField.tsx
+    └── TemplateFieldRenderer.tsx  # Dispatches to specific component
+```
+
+**Benefits:**
+- ✅ Reusability - each field type is self-contained
+- ✅ Easy testing - test one field type at a time
+- ✅ Type safety - each component has strict props
+- ✅ Clear separation of concerns
+
+**Dynamic Rendering Pattern:**
+```typescript
+// TemplateFieldRenderer.tsx
+export const TemplateFieldRenderer = ({ field, value, onChange }) => {
+    switch (field.type) {
+        case 'text':
+            return <TextField field={field} value={value} onChange={onChange} />;
+        case 'number':
+            return <NumberField field={field} value={value} onChange={onChange} />;
+        case 'enum':
+            return <EnumField field={field} value={value} onChange={onChange} />;
+        // ... all types
+        default:
+            return <TextField field={field} value={value} onChange={onChange} />;
+    }
+};
+```
+
+**RULE:** For features with multiple variants (field types, view modes, etc.), create:
+1. Individual components for each variant
+2. Central dispatcher component that delegates based on type/mode
+3. Common wrapper for shared styling/behavior
+
 ## Vite Environment Variables
 
 ### Type definitions for import.meta.env
@@ -170,8 +235,53 @@ VITE_API_URL=http://localhost:8000
 **Rule:** Provide sensible defaults and document all env variables in `.env.example`.
 
 ## Layout & Styling Guidelines
+
+### Content Readability
 - Preserve readability for long-form content (e.g., raw JSON) by applying `white-space: pre-wrap` and `word-break: break-word` in any scrollable `<pre>`/`<code>` blocks.
 - Prefer responsive wrappers over forcing horizontal scroll for critical text blocks.
+
+### Form Input Visibility
+
+**CRITICAL:** Always ensure text is visible in form inputs!
+
+**Problem from production:**
+- Light text on light background → can't read what you type
+- Dark text on dark background → same problem
+
+**Solution:**
+```css
+/* GOOD: High contrast */
+.field-input,
+.field-textarea,
+.field-select {
+    background: white;
+    color: #1f2937;  /* Dark text on light background */
+    border: 2px solid #e5e7eb;
+}
+
+/* For dark theme pages */
+.dark-theme .field-input {
+    background: #1f2937;
+    color: #f1f5f9;  /* Light text on dark background */
+}
+```
+
+**ALWAYS:**
+- Test inputs by actually typing text
+- Ensure sufficient contrast (WCAG AA minimum: 4.5:1)
+- Check both empty and filled states
+- Test on actual background colors used in UI
+
+**Common mistakes:**
+- ❌ Inheriting color from parent without explicit override
+- ❌ Using CSS variables without checking actual computed color
+- ❌ Testing only with placeholder text (different color from value)
+
+**Testing checklist:**
+- [ ] Type text in input - can you read it?
+- [ ] Select dropdown option - is it visible?
+- [ ] Fill textarea - is text readable?
+- [ ] Check on actual page background (not isolation)
 
 ## Build Verification
 - Always run `npm run build` (production build) before submitting changes to catch `tsc` warnings, unused symbols, and Vite-specific issues.
