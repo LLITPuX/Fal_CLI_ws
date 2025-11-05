@@ -1,0 +1,569 @@
+---
+description: Node Template System patterns and best practices
+alwaysApply: false
+---
+# NODE TEMPLATE SYSTEM RULES
+
+## Purpose
+
+Template system provides typed node creation with predefined fields, validation, and migration support for FalkorDB nodes.
+
+---
+
+## Storage Pattern
+
+### Templates as Special Nodes
+
+Templates are stored in FalkorDB as nodes with label `NodeTemplate`:
+
+```python
+# Template structure in DB
+CREATE (t:NodeTemplate {
+    id: "uuid",
+    label: "Person",  # Label for nodes created from this template
+    template_data: "{...}"  # JSON with full template definition
+})
+```
+
+### Node-Template Linking
+
+Nodes created from templates have `_template_id` property:
+
+```python
+CREATE (n:Person {
+    name: "John",
+    age: 30,
+    _template_id: "uuid-of-template"  # Links to template
+})
+```
+
+**WHY:** Enables migration when template changes - find all nodes by `_template_id`.
+
+---
+
+## Field Types
+
+### Supported Types (8 total)
+
+| Type | Frontend Component | Backend Type | Use Case |
+|------|-------------------|--------------|----------|
+| `text` | `<input type="text">` | `str` | Name, title, short text |
+| `longtext` | `<textarea>` | `str` | Description, biography |
+| `number` | `<input type="number">` | `int\|float` | Age, price, count |
+| `boolean` | Radio buttons | `bool` | is_active, verified |
+| `enum` | `<select>` dropdown | `str` | Category, status, type |
+| `date` | `<input type="date">` | `str` | Birth date, deadline |
+| `url` | `<input type="url">` | `str` | Website, profile |
+| `email` | `<input type="email">` | `str` | Contact email |
+
+### Field Definition Structure
+
+```typescript
+interface TemplateField {
+    id: string;                    // Unique ID
+    name: string;                  // Property key in DB
+    type: FieldType;               // One of 8 types
+    label: string;                 // Display name for users
+    required: boolean;             // Validation
+    placeholder?: string;          // Hint text
+    defaultValue?: any;            // Default value
+    enumValues?: string[];         // For enum type only
+    validation?: {                 // Optional validation
+        min?: number;
+        max?: number;
+        pattern?: string;
+    };
+}
+```
+
+---
+
+## Import/Export Formats
+
+### Two Supported Formats (Critical!)
+
+**Format 1: Single Template** (for individual files)
+```json
+{
+  "label": "Person",
+  "icon": "👤",
+  "description": "Людина або персонаж",
+  "fields": [
+    {
+      "id": "field-1",
+      "name": "name",
+      "type": "text",
+      "label": "Ім'я",
+      "required": true
+    }
+  ]
+}
+```
+
+**Use in:**
+- `backend/templates/*.json` (default templates)
+- Individual template export (`person-template.json`)
+
+**Format 2: Array of Templates** (for bulk operations)
+```json
+[
+  {
+    "id": "uuid",
+    "label": "Person",
+    "createdAt": "...",
+    "updatedAt": "...",
+    "fields": [...]
+  },
+  {
+    "id": "uuid2",
+    "label": "Company",
+    "fields": [...]
+  }
+]
+```
+
+**Use in:**
+- Export All functionality
+- Bulk imports
+
+### Backend Import Logic (Universal)
+
+```python
+async def import_templates(
+    self, 
+    templates_data: list[dict[str, Any]] | dict[str, Any],  # Accept BOTH!
+    overwrite: bool = False
+) -> dict[str, Any]:
+    """Import templates - supports single object or array."""
+    
+    # Normalize to list
+    if isinstance(templates_data, dict):
+        templates_list = [templates_data]
+    else:
+        templates_list = templates_data
+    
+    for template_data in templates_list:
+        # Process each template
+        ...
+```
+
+**CRITICAL:** ALWAYS support both single object and array in import endpoints.
+
+### Frontend Export Methods
+
+**Export Single Template:**
+```typescript
+async downloadSingleTemplate(template: NodeTemplate): Promise<void> {
+    // Remove metadata for compatibility with default templates
+    const exportData = {
+        label: template.label,
+        icon: template.icon,
+        description: template.description,
+        fields: template.fields,
+        // NO id, createdAt, updatedAt - for compatibility
+    };
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)]);
+    // Download as: {label}-template.json
+}
+```
+
+**Export All Templates:**
+```typescript
+async downloadTemplatesFile(): Promise<void> {
+    const templates = await this.exportTemplates();
+    // Full metadata included
+    // Download as: node-templates-{date}.json
+}
+```
+
+**Smart Import:**
+```typescript
+async uploadTemplatesFile(file: File): Promise<...> {
+    const data = JSON.parse(text);
+    
+    // Auto-detect format
+    let templates: any;
+    if (Array.isArray(data)) {
+        templates = data;           // Array format
+    } else if (typeof data === 'object') {
+        templates = data;           // Single template format
+    }
+    
+    await this.importTemplates({ templates, overwrite });
+}
+```
+
+---
+
+## Migration Pattern
+
+### When to Migrate
+
+Migrate nodes when template fields are updated (added/removed/modified).
+
+### Migration Process
+
+```python
+async def migrate_nodes(request: TemplateMigrationRequest):
+    """Add new template fields to existing nodes."""
+    
+    # 1. Get template
+    template = await self.get_template(request.template_id)
+    
+    # 2. Find all nodes with this template_id
+    nodes = await query(f"""
+        MATCH (n:{template.label} {{_template_id: $id}})
+        RETURN n
+    """)
+    
+    # 3. Find new fields (not in existing nodes)
+    for node in nodes:
+        updates = {}
+        for field in template.fields:
+            if field.name not in node.properties:
+                # Add with default or null
+                if apply_defaults and field.default_value:
+                    updates[field.name] = field.default_value
+                else:
+                    updates[field.name] = None
+        
+        # 4. Update node
+        if updates:
+            await query(f"MATCH (n {{_template_id: $id}}) SET ...", updates)
+```
+
+**UI Pattern:**
+- Show "🔄 Migrate" button on template card
+- Confirm with user before migration
+- Show results: "Migrated X nodes, added Y fields"
+
+**ALWAYS:**
+- Prompt user before migration (can affect many nodes)
+- Apply default values when available
+- Use `null` for fields without defaults
+- Log migration results
+
+---
+
+## Auto-Loading Default Templates
+
+### Startup Pattern
+
+```python
+# In lifespan event (app/main.py)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    client = await init_falkordb_client()
+    
+    # Auto-load default templates
+    await load_default_templates(client)
+    
+    yield
+    # Shutdown
+    await close_falkordb_client()
+```
+
+### Template Loader
+
+```python
+class TemplateLoader:
+    def __init__(self, client, templates_dir="backend/templates"):
+        self._service = TemplateService(client)
+        self._templates_dir = Path(templates_dir)
+    
+    async def load_default_templates(self):
+        # Read JSON files
+        for template_file in self._templates_dir.glob("*.json"):
+            template_data = json.load(template_file.open())
+            
+            # Check if exists
+            existing = await self._service.get_template_by_label(
+                template_data["label"]
+            )
+            
+            if existing:
+                logger.info(f"Template '{label}' exists, skipping")
+                continue
+            
+            # Create template
+            await self._service.create_template(...)
+```
+
+**NEVER:** Overwrite existing templates on startup - only load missing ones.
+
+---
+
+## Frontend UI Patterns
+
+### Template Selection Flow
+
+```
+User Journey:
+1. Opens "📍 Node" tab
+2. Sees dropdown: "Choose a template..."
+   - 👤 Person
+   - 🏢 Company
+   - 📅 Event
+   - ➕ Create New Template
+3. Selects "👤 Person"
+4. Form fields appear dynamically (name, age, email, biography, etc.)
+5. Fills fields with validation
+6. Submits → creates node with template_id
+```
+
+### Dynamic Field Rendering
+
+```typescript
+// TemplateFieldRenderer.tsx
+export const TemplateFieldRenderer = ({ field, value, onChange }) => {
+    switch (field.type) {
+        case 'text':
+            return <TextField field={field} value={value} onChange={onChange} />;
+        case 'longtext':
+            return <LongTextField field={field} value={value} onChange={onChange} />;
+        case 'enum':
+            return <EnumField field={field} value={value} onChange={onChange} />;
+        // ... for all 8 types
+    }
+};
+```
+
+**PATTERN:** Use centralized renderer for dynamic field generation based on template.
+
+### Template Editor Pattern
+
+```typescript
+// State management
+const [fields, setFields] = useState<TemplateField[]>([]);
+
+// Add field
+const addField = () => {
+    setFields([...fields, {
+        id: `field-${Date.now()}`,
+        name: '',
+        type: 'text',
+        label: '',
+        required: false,
+        enumValues: undefined  // Initialize properly
+    }]);
+};
+
+// Update field type
+const updateField = (id, updates) => {
+    setFields(fields.map(f => {
+        if (f.id === id) {
+            const updated = { ...f, ...updates };
+            
+            // Auto-initialize enumValues when switching to enum
+            if (updates.type === 'enum' && !updated.enumValues) {
+                updated.enumValues = [''];
+            }
+            
+            // Clear enumValues when switching away from enum
+            if (updates.type && updates.type !== 'enum' && f.type === 'enum') {
+                updated.enumValues = undefined;
+            }
+            
+            return updated;
+        }
+        return f;
+    }));
+};
+```
+
+---
+
+## Common Pitfalls & Solutions
+
+### 1. Empty Enum Values Saved
+
+**Problem:** User adds enum values but they save as `null` or `["", ""]`
+
+**Solution:**
+```typescript
+// Before save - filter empty values
+const cleanedFields = fields.map(field => {
+    if (field.type === 'enum' && field.enumValues) {
+        return {
+            ...field,
+            enumValues: field.enumValues.filter(v => v.trim() !== '')
+        };
+    }
+    return field;
+});
+
+// Validate
+for (const field of cleanedFields) {
+    if (field.type === 'enum' && (!field.enumValues || field.enumValues.length === 0)) {
+        throw new Error(`Enum field "${field.name}" must have at least one value`);
+    }
+}
+```
+
+### 2. Template Deletion with Associated Nodes
+
+**Problem:** Can't delete template if nodes exist using it
+
+**Solution:**
+```python
+async def delete_template(self, template_id: str):
+    # Check node count
+    result = await self._client.query("""
+        MATCH (n {_template_id: $template_id})
+        RETURN count(n) as count
+    """, {"template_id": template_id})
+    
+    node_count = result[0]["count"]
+    
+    if node_count > 0:
+        raise ValidationError(
+            f"Cannot delete template - it is used by {node_count} node(s)"
+        )
+    
+    # Safe to delete
+    await self._client.query("""
+        MATCH (t:NodeTemplate {id: $id})
+        DELETE t
+    """)
+```
+
+### 3. Enum Type Field Initialization
+
+**Problem:** When user switches field type to 'enum', enumValues is undefined
+
+**Solution:**
+```typescript
+// In updateField method
+if (updates.type === 'enum' && !updated.enumValues) {
+    updated.enumValues = [''];  // Initialize with one empty value
+}
+```
+
+### 4. CSS Visibility Issues
+
+**Problem:** Light text on light background - can't read input values
+
+**Solution:**
+```css
+.field-input,
+.field-textarea,
+.field-select {
+    background: white;
+    color: #1f2937;  /* Dark text */
+    border: 2px solid #e5e7eb;
+}
+```
+
+**ALWAYS:** Test form inputs with actual text to ensure visibility.
+
+---
+
+## Default Templates
+
+### Structure
+
+Place default templates in `backend/templates/`:
+
+```
+templates/
+├── person.json
+├── company.json
+├── event.json
+├── product.json
+└── document.json
+```
+
+### Template File Format
+
+```json
+{
+  "label": "Person",
+  "icon": "👤",
+  "description": "Людина або персонаж - реальна особа або вигаданий персонаж",
+  "fields": [
+    {
+      "id": "field-name",
+      "name": "name",
+      "type": "text",
+      "label": "Ім'я",
+      "required": true,
+      "placeholder": "Введіть ім'я"
+    },
+    {
+      "id": "field-type",
+      "name": "type",
+      "type": "enum",
+      "label": "Тип персони",
+      "required": false,
+      "default_value": "individual",
+      "enum_values": ["individual", "employee", "customer", "partner", "other"]
+    }
+  ]
+}
+```
+
+**RULES:**
+- Use `snake_case` for property names in JSON (backend compatible)
+- Provide meaningful descriptions (min 10 chars)
+- Include placeholders for better UX
+- Use default values where applicable
+
+---
+
+## Testing Checklist
+
+**When adding new template features:**
+- [ ] Test enum field with multiple values
+- [ ] Test empty enum values filtering
+- [ ] Test single template import
+- [ ] Test array template import
+- [ ] Test individual template export
+- [ ] Test export all templates
+- [ ] Test migration with default values
+- [ ] Test migration without defaults
+- [ ] Test template deletion with nodes (should fail)
+- [ ] Test template deletion without nodes (should succeed)
+- [ ] Test all 8 field types rendering
+- [ ] Test required field validation
+- [ ] Test field type switching in editor
+
+---
+
+## Quick Reference
+
+**Creating template (backend):**
+```python
+service = TemplateService(client)
+template = await service.create_template(CreateTemplateRequest(
+    label="Person",
+    icon="👤",
+    description="Description here...",
+    fields=[...]
+))
+```
+
+**Creating node from template (backend):**
+```python
+node = await service.create_node(CreateNodeRequest(
+    label="Person",
+    properties={"name": "John", "age": 30},
+    template_id="uuid-of-template"  # Links to template
+))
+```
+
+**Migrating nodes:**
+```python
+result = await service.migrate_nodes(TemplateMigrationRequest(
+    template_id="uuid",
+    apply_defaults=True  # Apply default values to new fields
+))
+# Returns: nodes_updated, fields_added
+```
+
+---
+
+**Version:** 2.3.0  
+**Last Updated:** November 5, 2025  
+**Status:** Production-ready
