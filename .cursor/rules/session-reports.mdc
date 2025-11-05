@@ -1,0 +1,387 @@
+---
+description: Guidelines for creating session summary reports
+alwaysApply: false
+---
+# SESSION REPORT RULES
+
+## Purpose
+
+Document work completed during coding sessions for future reference and knowledge base.
+
+---
+
+## When to Create
+
+Create session report when:
+- User explicitly requests: "підведи підсумки", "create session summary", "summarize session"
+- Major feature completion
+- End of significant refactoring
+- After fixing complex bugs
+- At user's discretion
+
+---
+
+## Report Location
+
+**Directory:** `.sessions/`
+
+**File naming:** `YYYY-MM-DD-short-description.md`
+
+**Examples:**
+- `.sessions/2025-11-05-template-system.md` ✅
+- `.sessions/2025-11-10-graph-visualization.md` ✅
+- `.sessions/2025-11-15-auth-bug-fixes.md` ✅
+
+**Why not gitignore:**
+- Reports are indexed by codebase search
+- AI can reference past sessions
+- Team can learn from history
+- Searchable knowledge base
+
+---
+
+## Tone and Objectivity
+
+### ❌ ABSOLUTELY FORBIDDEN
+
+**DO NOT:**
+- Declare "Production Ready" or "Ready for Production"
+- Rate quality with stars (⭐⭐⭐⭐⭐)
+- Make judgments about project completeness
+- Use words: "perfect", "excellent", "amazing", "flawless"
+- Conclude user's business decisions
+- Promise stability or reliability
+- Claim "zero bugs" or "bug-free"
+
+**Examples of FORBIDDEN statements:**
+- ❌ "System is production-ready!"
+- ❌ "Quality: ⭐⭐⭐⭐⭐ Production Ready"
+- ❌ "Perfect implementation, ready to deploy!"
+- ❌ "Zero known issues"
+
+### ✅ REQUIRED APPROACH
+
+**DO:**
+- State facts objectively
+- Describe what WAS done, not how "good" it is
+- List what WORKS and what DOESN'T
+- Be honest about limitations and risks
+- Mention remaining work explicitly
+- Note what was NOT tested
+- Acknowledge technical debt
+
+**Examples of CORRECT statements:**
+- ✅ "System implements core features X, Y, Z"
+- ✅ "Testing coverage: manual only. Unit tests pending"
+- ✅ "Works in development environment. Production testing not done"
+- ✅ "Known limitations: A, B, C"
+
+---
+
+## Report Structure Template
+
+```markdown
+# Session Report: {Feature Name}
+
+**Date:** {YYYY-MM-DD}  
+**Duration:** {Approximate time or "Full session" or "Multiple hours"}  
+**Version:** {Before} → {After} (if applicable)
+
+---
+
+## Objective
+
+{User's goal in their own words or paraphrased. What did they ask for?}
+
+---
+
+## Completed Tasks
+
+### Backend
+- ✅ Specific task 1
+- ✅ Specific task 2
+- ⚠️ Partially: task 3 (describe what's missing)
+
+### Frontend  
+- ✅ Task 1
+- ✅ Task 2
+
+### Documentation
+- ✅ Updated/created specific files
+
+### Other
+- ✅ Any other work
+
+---
+
+## Changes
+
+### Code Statistics
+- New files: X
+- Modified files: Y  
+- Deleted files: Z
+- Lines added: ~N (approximate)
+- Lines removed: ~M
+
+### File Structure Changes
+```
+path/to/
+├── new_file.py        ✨ NEW
+├── updated_file.py    ⚡ UPDATED
+└── old_file.py        🗑️ DELETED
+```
+
+---
+
+## Issues Found & Fixed
+
+### Issue 1: {Descriptive Title}
+**Problem:** {What wasn't working}  
+**Cause:** {Why it happened}  
+**Solution:** {How it was fixed}  
+**Files affected:** {List files}  
+**Risk:** {Could this happen again? What to watch for}
+
+### Issue 2: ...
+
+---
+
+## Lessons Learned
+
+### Technical Insights
+1. {What was learned about the technology/framework}
+2. {New patterns discovered}
+
+### Patterns Applied
+- {Pattern name}: {Brief description}
+- {Pattern name}: {Brief description}
+
+### Mistakes Made
+- ❌ {What approach didn't work}
+- ✅ {What worked instead}
+- 💡 {Why this matters for future}
+
+---
+
+## Testing
+
+### What Was Tested
+- ✅ {Feature 1}: manual testing
+- ✅ {Feature 2}: manual testing
+
+### What Was NOT Tested
+- ⚠️ Unit tests
+- ⚠️ Integration tests
+- ⚠️ Performance under load
+- ⚠️ Edge cases
+- ⚠️ Production environment
+- ⚠️ {Other}
+
+### Known Limitations
+- {Limitation 1}
+- {Limitation 2}
+
+---
+
+## Remaining Work
+
+### Must Do (Blocking)
+- [ ] {Critical task}
+- [ ] {Required for basic functionality}
+
+### Should Do (Important)
+- [ ] {Important but not blocking}
+- [ ] {Quality improvement}
+
+### Nice to Have (Future)
+- [ ] {Enhancement idea}
+- [ ] {Optimization}
+
+---
+
+## Git Activity
+
+**Total commits:** X
+
+### Breakdown by Type
+- feat: X commits (new features)
+- fix: X commits (bug fixes)
+- docs: X commits (documentation)
+- style: X commits (formatting, CSS)
+- refactor: X commits (code improvements)
+- chore: X commits (maintenance)
+
+**Commits pushed to remote:** ✅ Yes / ⚠️ No (local only)
+
+**Branch:** {branch name}
+
+---
+
+## Technical Debt
+
+{Any shortcuts taken, temporary solutions, hacks, or things that should be refactored later}
+
+Examples:
+- Using `any` type in TypeScript (where: file.ts:123)
+- TODO comments added (count: 5)
+- Skipped validation for quick testing
+- Hard-coded values that should be configurable
+
+---
+
+## Dependencies Changed
+
+### Added
+- {package@version} - {reason}
+
+### Updated
+- {package: old → new} - {reason}
+
+### Removed
+- {package} - {reason}
+
+---
+
+## Notes for Next Session
+
+{Anything important to remember for next time}
+
+Examples:
+- Remember to rebuild containers
+- Database schema changed - may need migration
+- New environment variable required in .env
+- Breaking changes in API
+
+---
+
+**Session Status:** {In Progress / Completed / Paused}  
+**Next Focus:** {What should be tackled next}
+```
+
+---
+
+## Content Requirements
+
+### Objective Section
+- Quote or paraphrase user's original request
+- Keep it short (1-3 sentences)
+
+### Changes Section
+- Real numbers when possible
+- Use ~approximations for large counts
+- Show file tree with emoji markers (✨⚡🗑️)
+
+### Issues Section  
+**CRITICAL:** Document EVERY bug/problem encountered:
+- Be specific about root cause
+- Explain what was tried
+- Note if it's a symptom of larger issue
+
+### Lessons Learned
+Focus on:
+- Technical insights gained
+- Patterns that emerged
+- Anti-patterns avoided
+- Knowledge for future sessions
+
+### Remaining Work
+**MANDATORY SECTION** - Never skip this!
+- What's not done
+- What needs testing
+- What could be improved
+- Technical debt created
+
+### Testing Section
+**CRITICAL:** Be honest about test coverage
+- List what was manually tested
+- List what was NOT tested
+- Note missing test types
+- Acknowledge risks
+
+## Quality Checklist
+
+Before finalizing report:
+
+**Objectivity:**
+- [ ] No "production ready" statements
+- [ ] No star ratings or quality scores  
+- [ ] No exaggerated claims
+- [ ] Honest about limitations
+
+**Completeness:**
+- [ ] All tasks listed
+- [ ] All issues documented
+- [ ] Remaining work section present
+- [ ] Testing section honest
+
+**Technical:**
+- [ ] File paths are accurate
+- [ ] Code statistics are approximate
+- [ ] Commit count is correct
+- [ ] All fixes are documented
+
+**Usefulness:**
+- [ ] Future me/AI can understand context
+- [ ] Lessons are actionable
+- [ ] Technical debt is noted
+- [ ] Next steps are clear
+
+---
+
+## Example Opening (GOOD)
+
+```markdown
+# Session Report: Template System Implementation
+
+**Date:** 2025-11-05
+**Duration:** Full session
+**Version:** 2.2.0 → 2.3.0
+
+## Objective
+
+User requested modernization of node creation in FalkorDB. Replace manual 
+property input with template-based system where users select predefined 
+templates with typed fields.
+
+## Completed Tasks
+
+### Backend
+- ✅ Created template schemas (15+ Pydantic models)
+- ✅ Implemented TemplateService (6 CRUD methods + migration)
+...
+```
+
+---
+
+## Example Opening (BAD - DON'T DO THIS)
+
+```markdown
+# Amazing Template System - Production Ready! ⭐⭐⭐⭐⭐
+
+We created the PERFECT template system that's 100% ready for production 
+and has zero bugs! Everything works flawlessly!
+
+**Quality:** Excellent  
+**Readiness:** Production Ready  
+**Status:** Perfect
+```
+
+**WHY BAD:**
+- Makes claims beyond scope
+- Not objective
+- No useful information
+- Ignores limitations
+
+---
+
+## Remember
+
+**Your job:** Document what happened  
+**NOT your job:** Judge if it's "ready"
+
+Be the objective historian, not the cheerleader.
+
+---
+
+**Version:** 1.0.0  
+**Created:** November 5, 2025
