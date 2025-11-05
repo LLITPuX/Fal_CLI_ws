@@ -37,7 +37,7 @@ class MessageRepository:
         cypher = """
         CREATE (s:ChatSession {
             id: $id,
-            created_at: datetime($created_at),
+            created_at: $created_at,
             user_id: $user_id,
             title: $title,
             status: $status,
@@ -114,7 +114,7 @@ class MessageRepository:
             id: $id,
             content: $content,
             role: $role,
-            timestamp: datetime($timestamp),
+            timestamp: $timestamp,
             status: $status,
             metadata: $metadata
         })

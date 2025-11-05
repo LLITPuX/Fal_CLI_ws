@@ -190,7 +190,10 @@ async def send_message(
     try:
         # Run through LangGraph workflow (Clerk agent)
         workflow = get_chat_workflow()
-        final_state = await workflow.ainvoke(initial_state)
+        final_state_dict = await workflow.ainvoke(initial_state)
+
+        # LangGraph returns dict, convert to ChatState
+        final_state = ChatState(**final_state_dict)
 
         if final_state.error:
             logger.error(f"Workflow error: {final_state.error}")

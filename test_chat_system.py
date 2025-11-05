@@ -1,4 +1,4 @@
-"""Test script for Cybersich Chat System (Писарь/Clerk Agent).
+"""Test script for Cybersich Chat System (Clerk Agent).
 
 This script tests the Chat API endpoints:
 1. Create a chat session
@@ -12,10 +12,14 @@ Usage:
 
 import asyncio
 import json
+import sys
 from datetime import datetime
 
 import httpx
 
+# Fix Windows console encoding
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8')
 
 BASE_URL = "http://localhost:8000/api/chat"
 
