@@ -81,12 +81,21 @@ export const TemplateManager = () => {
     }
   };
 
-  const handleExport = async () => {
+  const handleExportAll = async () => {
     try {
       await templateApi.downloadTemplatesFile();
-      showSuccess('Templates exported successfully');
+      showSuccess('All templates exported successfully');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to export templates');
+    }
+  };
+
+  const handleExportSingle = async (template: NodeTemplate) => {
+    try {
+      await templateApi.downloadSingleTemplate(template);
+      showSuccess(`Template "${template.label}" exported successfully`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to export template');
     }
   };
 
@@ -149,7 +158,7 @@ export const TemplateManager = () => {
           <button onClick={handleCreateTemplate} className="btn-primary">
             ➕ Create Template
           </button>
-          <button onClick={handleExport} className="btn-secondary">
+          <button onClick={handleExportAll} className="btn-secondary">
             📥 Export All
           </button>
           <div className="file-input-wrapper">
@@ -247,6 +256,13 @@ export const TemplateManager = () => {
                   className="btn-small"
                 >
                   ✏️ Edit
+                </button>
+                <button
+                  onClick={() => handleExportSingle(template)}
+                  className="btn-small"
+                  title="Export this template"
+                >
+                  📥 Export
                 </button>
                 <button
                   onClick={() => handleMigrateNodes(template)}

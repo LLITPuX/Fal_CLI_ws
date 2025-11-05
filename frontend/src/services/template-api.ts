@@ -215,7 +215,36 @@ export class TemplateApiClient {
   }
 
   /**
+   * Download a single template as JSON file
+   */
+  async downloadSingleTemplate(template: any): Promise<void> {
+    // Export single template without id, createdAt, updatedAt for compatibility
+    const exportData = {
+      label: template.label,
+      icon: template.icon,
+      description: template.description,
+      fields: template.fields,
+    };
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+      type: 'application/json',
+    });
+    
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${template.label.toLowerCase()}-template.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  /**
    * Upload templates from JSON file
+   * Supports both formats:
+   * - Single template: {"label": "Person", "fields": [...]}
+   * - Array of templates: [{"label": "Person"}, ...]
    */
   async uploadTemplatesFile(file: File, overwrite: boolean = false): Promise<TemplateImportResponse> {
     return new Promise((resolve, reject) => {
@@ -224,10 +253,17 @@ export class TemplateApiClient {
       reader.onload = async (e) => {
         try {
           const text = e.target?.result as string;
-          const templates = JSON.parse(text);
+          const data = JSON.parse(text);
           
-          if (!Array.isArray(templates)) {
-            throw new Error('Invalid file format: expected array of templates');
+          // Support both single template object and array
+          let templates: any;
+          if (Array.isArray(data)) {
+            templates = data;
+          } else if (typeof data === 'object' && data !== null) {
+            // Single template object
+            templates = data;
+          } else {
+            throw new Error('Invalid file format: expected template object or array of templates');
           }
           
           const result = await this.importTemplates({ templates, overwrite });
