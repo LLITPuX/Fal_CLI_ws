@@ -7,3 +7,7 @@ pydantic-settings==2.6.1
 falkordb==1.0.8
 redis[hiredis]==5.0.1
 
+# LangGraph for multi-agent system
+langgraph==0.2.28
+langchain-core==0.3.10
+

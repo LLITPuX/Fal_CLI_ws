@@ -6,7 +6,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agents.clerk.repository import MessageRepository
+from app.agents.graph import init_chat_workflow
 from app.api import router
+from app.api.chat_routes import router as chat_router
 from app.api.falkordb_routes import router as falkordb_router
 from app.api.template_routes import router as template_router
 from app.core.config import settings
@@ -45,6 +48,11 @@ async def lifespan(app: FastAPI):
         
         # Load default templates
         await load_default_templates(client)
+        
+        # Initialize LangGraph workflow for chat agents
+        repository = MessageRepository(client)
+        init_chat_workflow(repository)
+        logger.info("🤖 Multi-agent chat system (Писарь) initialized")
     except Exception as e:
         logger.error(f"Failed to initialize FalkorDB: {e}", exc_info=True)
         logger.warning("Continuing without FalkorDB support")
@@ -78,6 +86,7 @@ app.add_middleware(
 app.include_router(router, tags=["gemini"])
 app.include_router(falkordb_router, prefix="/api")
 app.include_router(template_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")  # Cybersich chat system
 
 # Root endpoint
 @app.get("/", tags=["root"])
