@@ -339,3 +339,103 @@ logger.info(f"User logged in: {user.id}")
 
 ### CLI Debug Logging
 - When debugging integrations with external CLI/API tools, capture and log the complete `stdout` and `stderr` payloads (including any `response` wrappers and markdown formatting) until the issue is resolved.
+
+---
+
+## Pydantic Serialization Best Practices
+
+### Field Aliases for Frontend Compatibility
+
+**PROBLEM:** Frontend uses camelCase, Python uses snake_case - causes data loss!
+
+**Example Issue:**
+- Frontend sends: `{"enumValues": ["a", "b"], "defaultValue": "a"}`
+- Backend expects: `{"enum_values": [...], "default_value": ...}`
+- Result: Fields become `null` ❌
+
+**SOLUTION:** Use Pydantic field aliases for bi-directional compatibility
+
+```python
+from pydantic import BaseModel, Field
+
+class ApiModel(BaseModel):
+    """Model shared with frontend."""
+    
+    # CRITICAL: Enable both naming conventions
+    model_config = {"populate_by_name": True}
+    
+    # Python naming (snake_case) with camelCase alias
+    created_at: str = Field(..., alias="createdAt")
+    updated_at: str = Field(..., alias="updatedAt")
+    enum_values: list[str] | None = Field(None, alias="enumValues")
+    default_value: Any | None = Field(None, alias="defaultValue")
+    
+    @field_validator("enum_values")
+    def validate_enum(cls, v):
+        if v is not None and len(v) == 0:
+            raise ValueError("Enum values cannot be empty array")
+        return v
+```
+
+### Serialization Direction
+
+**From Frontend (Deserialization):**
+```python
+# Pydantic accepts BOTH formats automatically
+data = ApiModel(**json_from_frontend)
+# Works with: {"enumValues": [...]} OR {"enum_values": [...]}
+```
+
+**To Frontend (Serialization):**
+```python
+# CRITICAL: Use by_alias=True to return camelCase
+response = data.model_dump(by_alias=True)
+# Returns: {"enumValues": [...], "createdAt": "..."}
+# NOT: {"enum_values": [...], "created_at": "..."}
+```
+
+### JSON Storage in Database
+
+When storing Pydantic models as JSON in database:
+
+```python
+# Serialize for storage
+template_data = {
+    "id": template_id,
+    "fields": [field.model_dump(by_alias=True) for field in request.fields],
+    "created_at": now,
+}
+
+# Store as JSON string
+params = {"template_data": json.dumps(template_data)}
+await client.query("CREATE (t:NodeTemplate {template_data: $template_data})", params)
+
+# Load from database
+result = await client.query("MATCH (t:NodeTemplate) RETURN t.template_data")
+template_data = json.loads(result[0]["template_data"])
+
+# Deserialize (accepts both formats)
+template = NodeTemplate(**template_data)
+```
+
+### Export Endpoints
+
+```python
+@router.get("/export")
+async def export_data(service: ServiceDep) -> ExportResponse:
+    """Export data for frontend download."""
+    
+    items = await service.list_items()
+    
+    # CRITICAL: Use by_alias=True for frontend compatibility
+    return ExportResponse(
+        items=[item.model_dump(by_alias=True) for item in items]
+    )
+```
+
+**CRITICAL RULES:**
+- ✅ Add `model_config = {"populate_by_name": True}` to all models shared with frontend
+- ✅ Use `by_alias=True` when returning data to frontend
+- ✅ Use `by_alias=True` when storing in JSON fields
+- ✅ Document both naming conventions in API docs
+- ❌ NEVER use `by_alias=False` for frontend responses
