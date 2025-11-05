@@ -791,8 +791,18 @@ docker compose restart falkordb
 - [ ] Use parameterized queries (never f-strings with user input)
 - [ ] Add health checks with `condition: service_healthy`
 
+**When implementing Template System:**
+- [ ] Use Pydantic aliases for camelCase/snake_case compatibility
+- [ ] Auto-load default templates on startup (from `backend/templates/`)
+- [ ] Support both single and array formats in import
+- [ ] Store templates as NodeTemplate nodes in FalkorDB
+- [ ] Add `_template_id` property to nodes created from templates
+- [ ] Implement migration endpoint for template updates
+- [ ] Filter empty enum values before saving
+- [ ] Provide individual and bulk export options
+
 ---
 
-**Version:** 2.2.0  
-**Last Updated:** November 3, 2025  
-**Status:** Production-ready patterns
+**Version:** 2.3.0  
+**Last Updated:** November 5, 2025  
+**Status:** Production-ready patterns with Template System
