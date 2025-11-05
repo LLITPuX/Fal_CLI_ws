@@ -16,7 +16,7 @@ function App() {
         </Routes>
 
         <footer className="app-footer">
-          <p>Powered by Google Gemini AI & FalkorDB · v2.2.0</p>
+          <p>Powered by Google Gemini AI & FalkorDB · v2.3.0</p>
         </footer>
       </div>
     </Router>

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # API Settings
     api_title: str = "Gemini Text Structurer API"
-    api_version: str = "2.2.0"
+    api_version: str = "2.3.0"
     api_description: str = "Async FastAPI service for structuring text via Gemini CLI"
     api_port: int = int(os.getenv("API_PORT", "8000"))
 
