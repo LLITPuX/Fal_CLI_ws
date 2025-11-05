@@ -254,9 +254,14 @@ class TemplateExportResponse(BaseModel):
 
 
 class TemplateImportRequest(BaseModel):
-    """Request to import templates."""
+    """Request to import templates.
     
-    templates: list[dict[str, Any]] = Field(..., description="Templates to import")
+    Supports both formats:
+    - Single template: {"templates": {...}}
+    - Array of templates: {"templates": [{...}, {...}]}
+    """
+    
+    templates: list[dict[str, Any]] | dict[str, Any] = Field(..., description="Templates to import (single or array)")
     overwrite: bool = Field(
         default=False,
         description="Whether to overwrite existing templates with same label"

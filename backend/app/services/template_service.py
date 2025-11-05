@@ -398,12 +398,16 @@ class TemplateService:
             raise ValidationError(f"Template export failed: {str(e)}")
 
     async def import_templates(
-        self, templates_data: list[dict[str, Any]], overwrite: bool = False
+        self, templates_data: list[dict[str, Any]] | dict[str, Any], overwrite: bool = False
     ) -> dict[str, Any]:
         """Import templates from JSON data.
 
+        Supports both formats:
+        - Single template: {"label": "Person", "fields": [...]}
+        - Array of templates: [{"label": "Person"}, {"label": "Company"}]
+
         Args:
-            templates_data: List of template data dictionaries
+            templates_data: Template data (single object or array)
             overwrite: Whether to overwrite existing templates with same label
 
         Returns:
@@ -417,7 +421,13 @@ class TemplateService:
         errors = []
 
         try:
-            for template_data in templates_data:
+            # Normalize input to list
+            if isinstance(templates_data, dict):
+                templates_list = [templates_data]
+            else:
+                templates_list = templates_data
+
+            for template_data in templates_list:
                 try:
                     # Check if template with this label exists
                     label = template_data.get("label")
