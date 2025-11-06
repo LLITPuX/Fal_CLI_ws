@@ -32,14 +32,6 @@ export const Navigation = () => {
             <span className="link-icon">🔗</span>
             <span>FalkorDB</span>
           </Link>
-          
-          <Link
-            to="/chat"
-            className={`nav-link ${location.pathname === '/chat' ? 'active' : ''}`}
-          >
-            <span className="link-icon">💬</span>
-            <span>Cybersich Chat</span>
-          </Link>
         </div>
       </div>
     </nav>

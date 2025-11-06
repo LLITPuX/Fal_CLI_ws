@@ -3,7 +3,6 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { TextInput } from '../components/TextInput';
 import { JsonViewer } from '../components/JsonViewer';
 import { ErrorMessage } from '../components/ErrorMessage';
@@ -16,7 +15,6 @@ const MODEL_HINTS: Record<string, string> = {
 };
 
 export const GeminiPage = () => {
-  const navigate = useNavigate();
   const defaultModel = useMemo(
     () => (import.meta.env.VITE_GEMINI_MODEL as string | undefined) ?? 'gemini-2.5-flash',
     []
@@ -40,49 +38,11 @@ export const GeminiPage = () => {
     setLoadingState({ status: 'idle' });
   };
 
-  const handleChatClick = () => {
-    navigate('/chat');
-  };
-
   return (
     <div className="gemini-page">
       <header className="app-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-          <div>
-            <h1>🤖 Gemini Text Structurer</h1>
-            <p>Transform unstructured text into structured JSON with performance metrics</p>
-          </div>
-          <button
-            onClick={handleChatClick}
-            className="chat-button"
-            style={{
-              padding: '12px 24px',
-              backgroundColor: '#0057B7',
-              color: '#FFFFFF',
-              border: '2px solid #0057B7',
-              borderRadius: '12px',
-              fontSize: '16px',
-              fontWeight: '600',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = '#FFD700';
-              e.currentTarget.style.borderColor = '#FFD700';
-              e.currentTarget.style.color = '#0057B7';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = '#0057B7';
-              e.currentTarget.style.borderColor = '#0057B7';
-              e.currentTarget.style.color = '#FFFFFF';
-            }}
-          >
-            💬 Cybersich Chat
-          </button>
-        </div>
+        <h1>🤖 Gemini Text Structurer</h1>
+        <p>Transform unstructured text into structured JSON with performance metrics</p>
       </header>
 
       <main className="app-main">
