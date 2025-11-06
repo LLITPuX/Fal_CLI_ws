@@ -98,9 +98,11 @@ export default function ChatPage() {
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',
         backgroundColor: '#F3EDDC',
+        margin: 0,
+        padding: 0,
       }}
     >
-      <div className="max-w-5xl mx-auto h-screen flex flex-col">
+      <div className="h-screen flex flex-col" style={{ maxWidth: 'none', margin: 0 }}>
         <ChatHeader />
 
         {error && (
