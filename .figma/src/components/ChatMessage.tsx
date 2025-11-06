@@ -1,13 +1,8 @@
+import React from 'react';
 import { Shield, User } from 'lucide-react';
+import type { ChatMessageProps } from '../types';
 
-interface Message {
-  id: string;
-  content: string;
-  role: 'user' | 'assistant';
-  timestamp: Date;
-}
-
-export function ChatMessage({ message }: { message: Message }) {
+export function ChatMessage({ message }: ChatMessageProps): JSX.Element {
   const isAssistant = message.role === 'assistant';
 
   return (

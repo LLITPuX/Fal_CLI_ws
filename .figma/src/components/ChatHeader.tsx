@@ -1,8 +1,9 @@
+import React from 'react';
 import { Shield, Menu, Settings } from 'lucide-react';
 import { Button } from './ui/button';
 import designGuide from 'figma:asset/da9550dcbe65c2aac03f4ad82653151f4edb368e.png';
 
-export function ChatHeader() {
+export function ChatHeader(): JSX.Element {
   return (
     <header 
       className="border-b-2 px-6 py-4"

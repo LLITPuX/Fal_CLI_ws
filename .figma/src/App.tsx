@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import React from 'react';
 import { ChatInterface } from './components/ChatInterface';
 import backgroundImage from 'figma:asset/2d76d3ed895b0324df0b5302921cd6c50e5b7a9e.png';
 
-export default function App() {
+export default function App(): JSX.Element {
   return (
     <div 
       className="min-h-screen relative"

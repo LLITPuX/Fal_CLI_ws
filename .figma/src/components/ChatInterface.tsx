@@ -1,15 +1,9 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { ChatHeader } from './ChatHeader';
 import { Shield, Scroll, Sparkles } from 'lucide-react';
-
-interface Message {
-  id: string;
-  content: string;
-  role: 'user' | 'assistant';
-  timestamp: Date;
-}
+import type { Message, SuggestionCardProps } from '../types';
 
 const initialMessages: Message[] = [
   {
@@ -20,7 +14,7 @@ const initialMessages: Message[] = [
   },
 ];
 
-export function ChatInterface() {
+export function ChatInterface(): JSX.Element {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -33,7 +27,7 @@ export function ChatInterface() {
     scrollToBottom();
   }, [messages, isTyping]);
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string): Promise<void> => {
     const userMessage: Message = {
       id: Date.now().toString(),
       content,
@@ -131,12 +125,7 @@ function SuggestionCard({
   title, 
   description, 
   onClick 
-}: { 
-  icon: React.ReactNode; 
-  title: string; 
-  description: string;
-  onClick: () => void;
-}) {
+}: SuggestionCardProps): JSX.Element {
   return (
     <button
       onClick={onClick}

@@ -8,6 +8,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // Figma asset aliases  
+      'figma:asset/2d76d3ed895b0324df0b5302921cd6c50e5b7a9e.png': '/2d76d3ed895b0324df0b5302921cd6c50e5b7a9e.png',
+      'figma:asset/da9550dcbe65c2aac03f4ad82653151f4edb368e.png': '/da9550dcbe65c2aac03f4ad82653151f4edb368e.png',
     },
   },
   server: {

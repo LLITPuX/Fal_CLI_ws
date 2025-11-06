@@ -1,13 +1,18 @@
 import { useState, KeyboardEvent } from 'react';
 import { Send, Paperclip, Mic } from 'lucide-react';
-import { Button } from './ui/button';
-import { Textarea } from './ui/textarea';
+import { Button } from '../ui/button';
+import { Textarea } from '../ui/textarea';
 
-export function ChatInput({ onSend }: { onSend: (message: string) => void }) {
-  const [input, setInput] = useState('');
+interface ChatInputProps {
+  onSend: (message: string) => void;
+  disabled?: boolean;
+}
+
+export function ChatInput({ onSend, disabled }: ChatInputProps) {
+  const [input, setInput] = useState<string>('');
 
   const handleSend = () => {
-    if (input.trim()) {
+    if (input.trim() && !disabled) {
       onSend(input.trim());
       setInput('');
     }
@@ -49,6 +54,7 @@ export function ChatInput({ onSend }: { onSend: (message: string) => void }) {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Напишіть ваше повідомлення..."
+            disabled={disabled}
             className="flex-1 min-h-[50px] max-h-[200px] border-0 resize-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0"
             style={{ 
               backgroundColor: 'transparent',
@@ -66,11 +72,11 @@ export function ChatInput({ onSend }: { onSend: (message: string) => void }) {
             </Button>
             <Button
               onClick={handleSend}
-              disabled={!input.trim()}
+              disabled={!input.trim() || disabled}
               size="icon"
               className="rounded-full"
               style={{
-                backgroundColor: input.trim() ? '#0057B7' : '#CCC',
+                backgroundColor: input.trim() && !disabled ? '#0057B7' : '#CCC',
                 color: '#FFFFFF',
               }}
             >
