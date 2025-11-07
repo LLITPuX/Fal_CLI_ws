@@ -1,0 +1,861 @@
+---
+description: Researcher Agent (Дослідник) - Text structuring research playground
+alwaysApply: false
+---
+# RESEARCHER AGENT (ДОСЛІДНИК) RULES
+
+**Status:** ✅ **EXISTS** as GeminiService - це документація існуючого функціоналу
+
+---
+
+## Purpose
+
+Researcher (Дослідник) - це research playground для експериментів з різними LLM моделями та підходами до структурування неструктурованого тексту.
+
+**NOT part of chat flow** - це standalone сервіс з власним UI для ручних експериментів.
+
+**Метафора:** Козацький розвідник, що досліджує різні підходи та можливості перед тим як застосувати в бою.
+
+---
+
+## Current Implementation
+
+### Location
+
+**Backend:**
+- `backend/app/services/gemini_service.py` - GeminiService class
+- `backend/app/api/routes.py` - /api/structure endpoint
+- `backend/app/models/schemas.py` - StructuredDoc, ProcessingMetrics
+
+**Frontend:**
+- `frontend/src/pages/GeminiPage.tsx` - UI для експериментів
+- `frontend/src/services/api.ts` - API client
+- `frontend/src/components/TextInput.tsx` - Input з model selector
+- `frontend/src/components/SchemaBuilder.tsx` - Custom schema builder
+
+### API Endpoints
+
+**POST /api/structure**
+```json
+{
+  "text": "Неструктурований текст...",
+  "model": "gemini-2.5-flash",
+  "custom_schema": "{...}"  // optional
+}
+```
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "json_path": "data/uuid.json",
+  "data": {...},  // Structured result
+  "metrics": {
+    "model": "gemini-2.5-flash",
+    "processing_time_ms": 1234.56,
+    "input_size": 500,
+    "output_size": 250
+  }
+}
+```
+
+---
+
+## Responsibilities
+
+### ✅ ЩО РОБИТЬ:
+
+1. **Приймає неструктурований текст** та custom schema (optional)
+2. **Будує промпт** з інструкціями для Gemini
+3. **Викликає Gemini CLI** через subprocess
+4. **Парсить JSON** з відповіді (витягує з markdown)
+5. **Валідує** через Pydantic schema
+6. **Зберігає результат** в `data/uuid.json` (atomic write)
+7. **Повертає метрики** (timing, token counts, model info)
+
+### ❌ ЩО НЕ РОБИТЬ:
+
+- ❌ Не записує в FalkorDB (тільки files)
+- ❌ Не інтегрований в chat flow
+- ❌ Не використовує контекст з історії
+- ❌ Не приймає рішення
+- ❌ Не є частиною multi-agent pipeline
+
+---
+
+## Відмінності від Chat Agents
+
+| Aspect | Researcher | Clerk | Subconscious | Orchestrator |
+|--------|-----------|-------|--------------|--------------|
+| **Призначення** | Експерименти | Запис в БД | Аналіз | Рішення |
+| **В chat flow?** | ❌ Ні | ✅ Так | ✅ Так | ✅ Так |
+| **LLM використання** | ✅ Heavy | ❌ Ні | ⚠️ Embeddings | ✅ Generation |
+| **UI** | ✅ Dedicated | ❌ Ні | ❌ Ні | ❌ Ні |
+| **Storage** | 📁 Files | 🗄️ FalkorDB | 🔗 Relationships | 🗄️ via Clerk |
+| **Latency** | ~1-5s | ~20ms | ~300ms | ~1-3s |
+| **Manual/Auto** | 👤 Manual | 🤖 Auto | 🤖 Auto | 🤖 Auto |
+
+**Key difference:** Researcher - для людини (UI-driven), Chat agents - для системи (event-driven).
+
+---
+
+## Current Features
+
+### 1. Model Selection
+
+```python
+# In GeminiService
+gemini_models = ["gemini-2.5-flash", "gemini-2.5-pro"]
+```
+
+**Frontend:**
+- Dropdown з вибором моделі
+- Hints (15 RPM vs 2 RPM)
+
+### 2. Custom Schema
+
+**UI Schema Builder:**
+- Візуальний конструктор JSON схем
+- Атомарне редагування полів
+- Типи: string, number, boolean, array, object
+- Збереження шаблонів
+
+### 3. Metrics Collection
+
+```python
+class ProcessingMetrics(BaseModel):
+    model: str
+    processing_time_ms: float
+    input_size: int
+    output_size: int
+    estimated_input_tokens: int
+    estimated_output_tokens: int
+```
+
+### 4. Error Handling
+
+- CLIExecutionError - CLI failed
+- JSONParsingError - Invalid JSON
+- ValidationException - Schema mismatch
+
+---
+
+## Future Evolution (Roadmap)
+
+### Phase Research.1: Multi-Model Support
+
+**Add providers:**
+```python
+class ModelProvider(Enum):
+    GEMINI = "gemini"           # Google (exists)
+    OPENAI = "openai"           # GPT-4, GPT-4o
+    ANTHROPIC = "anthropic"     # Claude
+    OLLAMA = "ollama"           # Local models
+    MISTRAL = "mistral"         # Mistral AI
+```
+
+**UI:**
+- Provider selector
+- Model selector per provider
+- Side-by-side comparison (2-4 models)
+
+**Implementation:**
+```python
+# services/model_providers/
+├── base.py              # AbstractModelProvider
+├── gemini.py            # GeminiProvider (existing)
+├── openai.py            # OpenAIProvider (new)
+├── anthropic.py         # AnthropicProvider (new)
+└── ollama.py            # OllamaProvider (new)
+
+class AbstractModelProvider:
+    async def structure(self, text: str, schema: dict) -> dict:
+        """Abstract method."""
+        pass
+```
+
+### Phase Research.2: Prompt Engineering
+
+**System prompt editor:**
+```python
+# Редагувати базовий промпт
+default_system_prompt = """
+You are an expert at structuring text.
+Convert the following text to JSON...
+"""
+
+# UI дозволяє змінювати
+custom_system_prompt = """
+You are a Ukrainian history expert...
+"""
+```
+
+**Prompt templates:**
+- Збережені промпти для різних задач
+- Template variables: {schema}, {text}, {language}
+- Versioning промптів
+
+**A/B Testing:**
+```python
+# Порівняти два промпти на одному тексті
+results = await compare_prompts(
+    text=text,
+    prompt_a=prompt_v1,
+    prompt_b=prompt_v2,
+    model="gemini-2.5-flash"
+)
+# Show differences, metrics
+```
+
+### Phase Research.3: Advanced Analytics
+
+**Quality scoring:**
+```python
+class QualityMetrics(BaseModel):
+    completeness: float     # 0-1, чи всі поля заповнені
+    accuracy: float         # Manual rating або auto
+    consistency: float      # Multiple runs consistency
+    schema_compliance: bool # Валідний JSON schema
+```
+
+**Benchmark suite:**
+- Стандартний набір текстів для тестування
+- Різні складності (simple, medium, complex)
+- Різні мови (Ukrainian, English, mixed)
+- Різні типи (article, contract, chat, email)
+
+**Cost tracking:**
+```python
+class CostMetrics(BaseModel):
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float          # Based on provider pricing
+    cost_per_1k_tokens: float
+```
+
+### Phase Research.4: Automation
+
+**Batch processing:**
+- Upload multiple files
+- Process з одним schema
+- Export aggregated results
+
+**Scheduled experiments:**
+- Nightly benchmarks
+- Model regression testing
+- Cost monitoring
+
+---
+
+## Technical Implementation
+
+### Current Stack
+
+```python
+# GeminiService methods:
+async def run_cli(prompt: str) -> tuple[str, float]
+async def extract_json(raw_output: str) -> dict
+async def validate_output(data: dict, schema: str | None) -> StructuredDoc
+async def save_result(doc: StructuredDoc) -> tuple[str, Path]
+async def structure_text(text: str, schema: str | None) -> tuple[...]
+```
+
+**Async-first:** Всі операції через asyncio.create_subprocess_exec
+
+**Error handling:** Try-catch на кожному рівні з детальними помилками
+
+### Future Additions
+
+**Multi-model abstraction:**
+```python
+class ResearchService:
+    def __init__(self):
+        self.providers = {
+            "gemini": GeminiProvider(),
+            "openai": OpenAIProvider(),
+            "anthropic": AnthropicProvider(),
+        }
+    
+    async def structure_with_model(
+        self,
+        text: str,
+        model: str,
+        provider: str,
+        schema: dict | None = None
+    ) -> StructuredResult:
+        """Structure using specified model."""
+        provider_service = self.providers[provider]
+        return await provider_service.structure(text, schema)
+    
+    async def compare_models(
+        self,
+        text: str,
+        models: list[tuple[str, str]],  # [(provider, model)]
+        schema: dict | None = None
+    ) -> list[ComparisonResult]:
+        """Run same text through multiple models."""
+        tasks = [
+            self.structure_with_model(text, model, provider, schema)
+            for provider, model in models
+        ]
+        return await asyncio.gather(*tasks)
+```
+
+---
+
+## Storage Strategy
+
+### Current (Files)
+
+```
+data/
+├── abc123.json    # Structured result
+├── def456.json
+└── ...
+```
+
+**Pros:** Simple, no DB overhead  
+**Cons:** Hard to query, no metadata search
+
+### Future (Hybrid)
+
+**Files + Results Database:**
+```python
+# Store results metadata in FalkorDB
+(:ResearchRun {
+  id: "uuid",
+  model: "gemini-2.5-flash",
+  provider: "gemini",
+  timestamp: "...",
+  input_length: 500,
+  output_length: 250,
+  processing_time: 1234.56,
+  cost_usd: 0.002,
+  quality_score: 0.85,
+  file_path: "data/uuid.json"
+})
+
+// Relationships
+(:ResearchRun)-[:USED_MODEL]->(:Model)
+(:ResearchRun)-[:TESTED_SCHEMA]->(:Schema)
+```
+
+**Benefits:**
+- Queryable через Cypher
+- Analytics через graph
+- History tracking
+- Compare runs
+
+---
+
+## UI Enhancements (Future)
+
+### Current (GeminiPage)
+
+- Text input
+- Model dropdown
+- Schema builder
+- JSON viewer
+- Basic metrics
+
+### Future (ResearchLab)
+
+**Compare View:**
+```
+┌─────────────────────────────────────────┐
+│  Model 1: Gemini   │  Model 2: GPT-4   │
+├────────────────────┼────────────────────┤
+│  Result JSON 1     │  Result JSON 2    │
+├────────────────────┼────────────────────┤
+│  Time: 1.2s        │  Time: 2.5s       │
+│  Cost: $0.001      │  Cost: $0.005     │
+│  Quality: 0.85     │  Quality: 0.92    │
+└────────────────────┴────────────────────┘
+```
+
+**Prompt Editor:**
+- Syntax highlighting
+- Variable substitution
+- Template library
+- Version control
+
+**History View:**
+- All past experiments
+- Filter by model, date, quality
+- Re-run with same params
+- Export to CSV
+
+---
+
+## Testing Strategy
+
+### Current
+
+- ✅ Manual testing через UI
+- ⚠️ No unit tests для GeminiService
+- ⚠️ No integration tests
+
+### Future
+
+**Unit tests:**
+```python
+@pytest.mark.asyncio
+async def test_structure_text():
+    service = GeminiService()
+    result = await service.structure_text(
+        text="John Doe, 30 years old",
+        schema=person_schema
+    )
+    assert result.data["name"] == "John Doe"
+    assert result.metrics.processing_time_ms > 0
+```
+
+**Benchmark tests:**
+```python
+@pytest.mark.benchmark
+async def test_model_comparison():
+    results = await compare_models(
+        text=BENCHMARK_TEXT,
+        models=[("gemini", "flash"), ("openai", "gpt-4o")]
+    )
+    assert len(results) == 2
+    # Compare quality, timing, cost
+```
+
+---
+
+## Configuration
+
+### Current Settings
+
+```python
+# core/config.py
+gemini_cli: str = "gemini"
+gemini_model: str = "gemini-2.5-flash"
+gemini_timeout: int = 300
+gemini_models: list[str] = ["gemini-2.5-flash"]
+default_output_dir: str = "data"
+```
+
+### Future Settings
+
+```python
+# Multi-provider config
+class ResearchSettings:
+    # Gemini (existing)
+    gemini_api_key: str
+    gemini_models: list[str]
+    
+    # OpenAI (future)
+    openai_api_key: str
+    openai_models: list[str] = ["gpt-4o", "gpt-4-turbo"]
+    
+    # Anthropic (future)
+    anthropic_api_key: str
+    anthropic_models: list[str] = ["claude-3-5-sonnet"]
+    
+    # Cost tracking
+    track_costs: bool = True
+    cost_limit_usd: float = 10.0  # Daily limit
+```
+
+---
+
+## Performance Characteristics
+
+### Current (Gemini Only)
+
+**Model latencies:**
+- gemini-2.5-flash: ~1-2s (15 RPM)
+- gemini-2.5-pro: ~2-5s (2 RPM)
+
+**Bottlenecks:**
+- CLI spawn time: ~200-500ms
+- Gemini API call: ~1-4s
+- JSON parsing: ~10ms
+
+### Future (Multi-Model)
+
+**Expected latencies:**
+- OpenAI GPT-4o: ~2-3s
+- Claude Sonnet: ~1-3s
+- Ollama (local): ~500ms-2s (depends on hardware)
+
+**Optimization:**
+- Parallel requests (asyncio.gather)
+- Connection pooling (httpx.AsyncClient)
+- Result caching (Redis)
+
+---
+
+## Use Cases
+
+### 1. Model Evaluation
+
+**Before adding to production:**
+```
+1. Test model with typical inputs
+2. Compare quality vs cost vs speed
+3. Identify failure modes
+4. Choose optimal model
+```
+
+### 2. Prompt Optimization
+
+**Find best prompt:**
+```
+1. Write baseline prompt
+2. Create variations
+3. A/B test on benchmark suite
+4. Measure quality improvements
+5. Deploy winner
+```
+
+### 3. Schema Development
+
+**Design optimal schema:**
+```
+1. Try different field structures
+2. Test required vs optional
+3. Check validation errors
+4. Iterate until robust
+```
+
+### 4. Cost Analysis
+
+**Budget planning:**
+```
+1. Process sample dataset
+2. Measure token usage
+3. Calculate monthly cost
+4. Choose cost-effective model
+```
+
+### 5. Quality Benchmarking
+
+**Regression testing:**
+```
+1. Maintain benchmark suite
+2. Run nightly on all models
+3. Track quality over time
+4. Detect degradations
+```
+
+---
+
+## Integration Points
+
+### Standalone (Current)
+
+```
+User → GeminiPage UI → /api/structure → GeminiService → Gemini CLI
+```
+
+**No integration** з chat system.
+
+### Possible Future: Tool for Orchestrator
+
+```
+Chat: "Структуруй цей документ..."
+    ↓
+Orchestrator detects need
+    ↓
+    └──→ Researcher Tool (через GeminiService)
+         ← Structured result
+    ↓
+Response: "Ось структурований документ..."
+```
+
+**Decision:** Поки що standalone. Інтеграція - Phase 4+.
+
+---
+
+## Lessons Learned (Current Implementation)
+
+### Issue 1: CLI Output Contains Markdown
+
+**Problem:** Gemini CLI wraps JSON в markdown ```json...```
+
+**Solution:**
+```python
+def extract_json(raw_output: str) -> dict:
+    # Strip markdown fences
+    if "```json" in raw_output:
+        start = raw_output.find("```json") + 7
+        end = raw_output.rfind("```")
+        json_str = raw_output[start:end].strip()
+    else:
+        json_str = raw_output
+    
+    return json.loads(json_str)
+```
+
+### Issue 2: Gemini Sometimes Returns {"response": {...}}
+
+**Problem:** Extra wrapper object
+
+**Solution:**
+```python
+if "response" in parsed and len(parsed) == 1:
+    parsed = parsed["response"]  # Unwrap
+```
+
+### Issue 3: Timeout for Long Texts
+
+**Problem:** Default timeout (30s) недостатньо для великих текстів
+
+**Solution:** Configurable timeout (300s default)
+
+### Issue 4: Custom Schema Validation
+
+**Problem:** User schema може не співпадати з StructuredDoc
+
+**Solution:** Dynamic validation - якщо є custom_schema, не валідуємо через StructuredDoc
+
+---
+
+## Future Enhancements
+
+### Phase Research.1: Multi-Model Support
+
+**Priority:** 🔴 High
+
+**Tasks:**
+- [ ] Abstract ModelProvider interface
+- [ ] OpenAI provider (GPT-4o, GPT-4-turbo)
+- [ ] Anthropic provider (Claude 3.5)
+- [ ] Ollama provider (local models)
+- [ ] Cost calculation per provider
+- [ ] UI model selector (grouped by provider)
+
+**Benefit:** Compare models before committing to one.
+
+---
+
+### Phase Research.2: Prompt Engineering Suite
+
+**Priority:** 🟡 Medium
+
+**Tasks:**
+- [ ] System prompt editor in UI
+- [ ] Prompt template library (save/load)
+- [ ] Variable substitution ({schema}, {text}, {example})
+- [ ] A/B testing framework (run 2+ prompts, compare)
+- [ ] Prompt versioning (v1, v2, ...)
+- [ ] Best prompt auto-suggestion
+
+**Benefit:** Optimize prompts = better quality + lower cost.
+
+---
+
+### Phase Research.3: Benchmark & Analytics
+
+**Priority:** 🟡 Medium
+
+**Tasks:**
+- [ ] Benchmark text suite (10-20 samples)
+- [ ] Quality scoring (manual + auto)
+- [ ] Model leaderboard (by quality, speed, cost)
+- [ ] Regression testing (detect model changes)
+- [ ] Export reports (CSV, PDF)
+- [ ] Charts (quality over time, cost trends)
+
+**Benefit:** Data-driven decisions, track improvements.
+
+---
+
+### Phase Research.4: Advanced Features
+
+**Priority:** 🟢 Low (nice to have)
+
+**Tasks:**
+- [ ] Batch processing (upload CSV, process all)
+- [ ] Incremental structuring (chunk long docs)
+- [ ] Chain processing (structure → enhance → validate)
+- [ ] Collaborative feedback (team ratings)
+- [ ] Auto-detect optimal schema
+- [ ] Generate schema from examples
+
+**Benefit:** Professional research tool.
+
+---
+
+## Code Organization (Future Refactoring)
+
+### Current Location
+
+```
+backend/app/services/gemini_service.py
+```
+
+### Future Location (Phase Research.1)
+
+```
+backend/app/agents/researcher/
+├── __init__.py
+├── service.py                 # ResearchService (orchestrates providers)
+├── providers/
+│   ├── base.py               # AbstractModelProvider
+│   ├── gemini.py             # GeminiProvider (refactored from GeminiService)
+│   ├── openai.py             # NEW
+│   ├── anthropic.py          # NEW
+│   └── ollama.py             # NEW
+├── schemas.py                # StructuredDoc, Metrics, ComparisonResult
+└── benchmarks.py             # Benchmark suite
+```
+
+**Migration strategy:** 
+- Create new structure
+- Move GeminiService → researcher/providers/gemini.py
+- Keep backward compatibility (/api/structure unchanged)
+- Deprecate old gradually
+
+---
+
+## API Evolution
+
+### Current API
+
+```
+POST /api/structure
+  - Single model
+  - Single result
+```
+
+### Future API (Phase Research.1+)
+
+```
+POST /api/research/structure
+  - Body: {text, model, provider, schema, system_prompt}
+  - Response: Single result + metrics
+
+POST /api/research/compare
+  - Body: {text, models: [{provider, model}], schema}
+  - Response: Array of results with comparison
+
+GET /api/research/history
+  - Response: Past experiments with filters
+
+POST /api/research/benchmark
+  - Body: {benchmark_id, models}
+  - Response: Benchmark results
+
+GET /api/research/models
+  - Response: Available models per provider with pricing
+```
+
+---
+
+## Monitoring & Observability
+
+### Metrics to Track
+
+1. **Usage metrics:**
+   - Requests per day/hour
+   - Models used (distribution)
+   - Average processing time
+   - Success rate
+
+2. **Cost metrics:**
+   - Total cost per day/month
+   - Cost per model
+   - Cost per user (if auth added)
+
+3. **Quality metrics:**
+   - Schema compliance rate
+   - User satisfaction (ratings)
+   - Error types distribution
+
+### Dashboards (Future)
+
+**Research Dashboard:**
+- Model usage pie chart
+- Cost over time line chart
+- Quality trends
+- Recent experiments table
+
+---
+
+## Security Considerations
+
+### Current
+
+- ✅ Pydantic validation on input
+- ✅ CLI timeout limits
+- ✅ Output size limits (implicit через Gemini)
+- ⚠️ No rate limiting
+- ⚠️ No auth (open access)
+
+### Future
+
+- [ ] API key per user
+- [ ] Rate limiting (requests/hour)
+- [ ] Cost limits per user
+- [ ] Input sanitization (malicious prompts)
+- [ ] Output filtering (sensitive data detection)
+
+---
+
+## Comparison: Researcher vs Other Services
+
+### vs Clerk
+
+**Clerk:** Records chat messages (real-time, DB)  
+**Researcher:** Structures arbitrary text (on-demand, files)
+
+### vs Template System
+
+**Templates:** Structured input → FalkorDB nodes  
+**Researcher:** Unstructured text → Structured JSON
+
+### vs FalkorDB Service
+
+**FalkorDB:** Graph operations (CRUD, query)  
+**Researcher:** Text transformation (unstructured → structured)
+
+**All different purposes, minimal overlap.**
+
+---
+
+## Documentation TODOs
+
+When implementing Research phases:
+
+- [ ] Update this file з patterns
+- [ ] Document provider interfaces
+- [ ] Add prompt engineering guidelines
+- [ ] Benchmark suite documentation
+- [ ] Cost calculation formulas
+- [ ] Quality scoring methodology
+
+---
+
+## Notes
+
+- **Keep standalone** - не інтегрувати в chat flow (різне призначення)
+- **Focus on research** - якість, швидкість, вартість, не production usage
+- **UI-driven** - manual experimentation, not automated pipeline
+- **Evolutionary approach** - додаємо features по мірі потреби
+- **Document learnings** - кожен експеримент → insights
+
+---
+
+## Quick Reference
+
+**Current endpoint:** `POST /api/structure`  
+**Current UI:** http://localhost:3000 (GeminiPage)  
+**Current models:** Gemini Flash only  
+**Current storage:** `data/*.json`
+
+**Future focus:**
+1. Multi-model support
+2. Prompt engineering
+3. Benchmarking
+4. Cost tracking
+
+---
+
+**Version:** 1.0.0  
+**Created:** November 6, 2025  
+**Status:** Exists as GeminiService, roadmap for evolution  
+**Next:** Phase Research.1 (Multi-Model) when needed
