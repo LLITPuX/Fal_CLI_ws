@@ -1,0 +1,674 @@
+---
+description: Clerk Agent (Писарь) patterns and best practices
+alwaysApply: false
+---
+# CLERK AGENT (ПИСАРЬ) RULES
+
+## Purpose
+
+Писарь - перший агент в мультиагентній системі. Його ЄДИНА задача: записувати кожне повідомлення (user та assistant) в FalkorDB без будь-якої обробки.
+
+---
+
+## Responsibility (Single Responsibility Principle)
+
+### ✅ ТІЛЬКИ ЦЕ:
+
+1. **Отримати повідомлення** з state
+2. **Створити ChatMessage** object
+3. **Записати в FalkorDB** через repository
+4. **Оновити state** з message_id та recorded=True
+
+### ❌ ЗАБОРОНЕНО:
+
+- ❌ Аналізувати контент повідомлення
+- ❌ Змінювати текст
+- ❌ Приймати рішення
+- ❌ Генерувати відповіді
+- ❌ Шукати зв'язки з іншими повідомленнями
+- ❌ Фільтрувати або валідувати контент (це API layer)
+
+**Метафора:** Древній писар просто переписує текст, не інтерпретує його.
+
+---
+
+## Module Structure
+
+```
+backend/app/agents/clerk/
+├── __init__.py           # Public API
+├── schemas.py            # ChatMessage, ChatSession
+├── repository.py         # FalkorDB CRUD
+└── nodes.py              # clerk_record_node
+```
+
+### File Responsibilities
+
+**schemas.py:**
+- Define ChatMessage (id, content, role, timestamp, status)
+- Define ChatSession (id, created_at, user_id, title, status)
+- Pydantic models with validation
+
+**repository.py:**
+- create_session() - CREATE (:ChatSession)
+- create_message() - CREATE (:Message)-[:IN_SESSION]->(:ChatSession)
+- get_session_messages() - MATCH and retrieve history
+- update_message_status() - SET m.status
+
+**nodes.py:**
+- clerk_record_node() - LangGraph node function
+
+---
+
+## Node Implementation
+
+### Standard Pattern
+
+```python
+async def clerk_record_node(state: dict, repository: MessageRepository) -> dict:
+    """Record message to FalkorDB without processing.
+    
+    Args:
+        state: Current state from LangGraph
+        repository: MessageRepository for DB operations
+        
+    Returns:
+        Updated state with recording results
+    """
+    logger.info("📝 Писарь: Починаю запис повідомлення...")
+    
+    try:
+        # 1. Create message from state
+        message = ChatMessage(
+            content=state["message_content"],
+            role=state["message_role"],
+            session_id=state["session_id"],
+            timestamp=datetime.now(),
+            status="recorded",
+            metadata=state.get("metadata", {}),
+        )
+        
+        # 2. Save to FalkorDB
+        message_id = await repository.create_message(message)
+        
+        # 3. Update state
+        state["message_id"] = message_id
+        state["recorded"] = True
+        state["error"] = None
+        
+        logger.info(
+            f"📝 Писарь успішно записав: {message_id} "
+            f"(role={message.role}, length={len(message.content)})"
+        )
+        
+    except Exception as e:
+        logger.error(f"📝 Писарь: Помилка запису: {e}", exc_info=True)
+        state["recorded"] = False
+        state["error"] = f"Recording failed: {str(e)}"
+    
+    return state
+```
+
+**KEY POINTS:**
+- Input: dict (LangGraph format)
+- Output: dict (modified, not replaced)
+- Dependency injection через параметр
+- Detailed logging з emoji prefix
+- Graceful error handling
+
+---
+
+## Repository Pattern
+
+### CRUD Operations
+
+**create_message():**
+```python
+async def create_message(self, message: ChatMessage) -> str:
+    """Record message to FalkorDB."""
+    cypher = """
+    MATCH (s:ChatSession {id: $session_id})
+    CREATE (m:Message {
+        id: $id,
+        content: $content,
+        role: $role,
+        timestamp: $timestamp,
+        status: $status,
+        metadata: $metadata
+    })
+    CREATE (m)-[:IN_SESSION]->(s)
+    RETURN m.id as id
+    """
+    
+    params = {
+        "id": message.id,
+        "content": message.content,
+        "role": message.role,
+        "timestamp": message.timestamp.isoformat(),  # ISO string!
+        "session_id": message.session_id,
+        "status": message.status,
+        "metadata": str(message.metadata),  # FalkorDB не любить nested dicts
+    }
+    
+    results, exec_time = await self.client.query(cypher, params)
+    logger.info(f"📝 Писарь записав: {message.id} ({exec_time:.2f}ms)")
+    
+    return results[0]["id"] if results else message.id
+```
+
+**CRITICAL LESSONS:**
+
+1. **Timestamps як ISO strings** - FalkorDB не підтримує datetime() function
+   ```python
+   # ❌ WRONG
+   timestamp: datetime($timestamp)
+   
+   # ✅ CORRECT
+   timestamp: $timestamp  # Pass as ISO string
+   ```
+
+2. **Metadata як string** - FalkorDB не підтримує nested objects
+   ```python
+   metadata: str(message.metadata)  # Convert to string
+   ```
+
+3. **Always use parameterized queries** - ніколи f-strings з user input
+
+---
+
+## FalkorDB Schema
+
+### Nodes
+
+```cypher
+// ChatSession
+(:ChatSession {
+  id: "uuid",              // UUID hex
+  created_at: "ISO8601",   // String, not datetime!
+  user_id: "identifier",
+  title: "optional",
+  status: "active|archived",
+  metadata: "{}"           // JSON string
+})
+
+// Message  
+(:Message {
+  id: "uuid",
+  content: "text",
+  role: "user|assistant|system",
+  timestamp: "ISO8601",    // String, not datetime!
+  status: "recorded|analyzed|responded",
+  metadata: "{}"
+})
+```
+
+### Relationships
+
+```cypher
+// Basic (Phase 1)
+(:Message)-[:IN_SESSION]->(:ChatSession)
+
+// Future (Phase 2 - Subconscious)
+(:Message)-[:FOLLOWS]->(:Message)          // Послідовність
+(:Message)-[:REFERENCES {similarity: 0.85}]->(:Message)  // Семантичний зв'язок
+```
+
+---
+
+## Error Handling
+
+### Three-Layer Strategy
+
+**1. Repository Layer → DatabaseError**
+```python
+try:
+    result = await self.client.query(cypher, params)
+except Exception as e:
+    raise DatabaseError(f"Query failed: {e}")
+```
+
+**2. Node Layer → Update state.error**
+```python
+try:
+    message_id = await repository.create_message(message)
+    state["recorded"] = True
+except DatabaseError as e:
+    state["recorded"] = False
+    state["error"] = str(e)
+```
+
+**3. API Layer → HTTPException**
+```python
+try:
+    final_state = await workflow.ainvoke(state)
+    if final_state.error:
+        raise HTTPException(500, detail=final_state.error)
+except Exception as e:
+    raise HTTPException(500, detail=str(e))
+```
+
+**NEVER let exceptions bubble unhandled!**
+
+---
+
+## Testing Strategy
+
+### Unit Tests
+
+**Test repository methods:**
+```python
+@pytest.mark.asyncio
+async def test_create_message(mock_falkordb_client):
+    repo = MessageRepository(mock_falkordb_client)
+    
+    message = ChatMessage(
+        content="Test message",
+        role="user",
+        session_id="test_session"
+    )
+    
+    message_id = await repo.create_message(message)
+    
+    assert message_id is not None
+    mock_falkordb_client.query.assert_called_once()
+```
+
+**Test node function:**
+```python
+@pytest.mark.asyncio
+async def test_clerk_record_node(mock_repository):
+    state = {
+        "message_content": "Hello",
+        "message_role": "user",
+        "session_id": "test123"
+    }
+    
+    result = await clerk_record_node(state, mock_repository)
+    
+    assert result["recorded"] is True
+    assert result["message_id"] is not None
+    assert result["error"] is None
+```
+
+---
+
+## Logging Best Practices
+
+### Structured Logging
+
+```python
+# Always include:
+logger.info(
+    f"📝 Писарь успішно записав: {message_id} "
+    f"(role={message.role}, "
+    f"content_length={len(message.content)}, "
+    f"session={message.session_id}, "
+    f"time={exec_time:.2f}ms)"
+)
+```
+
+**What to log:**
+- ✅ Message ID (для tracing)
+- ✅ Role (user/assistant)
+- ✅ Content length (не сам content - privacy!)
+- ✅ Session ID
+- ✅ Execution time
+- ✅ Success/failure
+
+**What NOT to log:**
+- ❌ Full message content (може містити sensitive data)
+- ❌ User credentials
+- ❌ Full metadata if contains PII
+
+---
+
+## Performance Characteristics
+
+### Expected Timings
+
+**Session creation:** ~10-20ms  
+**Message recording:** ~12-50ms  
+**History retrieval (50 msg):** ~30-100ms
+
+**If slower:**
+- Check FalkorDB connection
+- Check query complexity
+- Check network latency (Docker)
+
+### Optimization
+
+**Already optimal:**
+- ✅ Parameterized queries (prepared statements)
+- ✅ Async execution (non-blocking)
+- ✅ Simple CREATE (no complex MATCH)
+
+**Future optimization:**
+- Batch inserts (якщо треба записати багато messages)
+- Connection pooling (вже є через singleton)
+
+---
+
+## Common Mistakes & How to Avoid
+
+### Mistake 1: Trying to Be Smart
+
+**WRONG:**
+```python
+async def clerk_record_node(state, repo):
+    content = state["message_content"]
+    
+    # ❌ Писарь НЕ повинен думати!
+    if "bad word" in content:
+        return state  # Skip recording
+    
+    # ❌ Писарь НЕ модифікує!
+    content = content.lower()
+```
+
+**CORRECT:**
+```python
+async def clerk_record_node(state, repo):
+    # ✅ Просто записуємо як є
+    message = ChatMessage(content=state["message_content"], ...)
+    message_id = await repo.create_message(message)
+```
+
+### Mistake 2: Not Handling Sessions
+
+**WRONG:**
+```python
+# ❌ Не перевіряємо чи існує session
+cypher = "CREATE (m:Message {...})"  # No IN_SESSION relationship
+```
+
+**CORRECT:**
+```python
+# ✅ Завжди зв'язуємо з session
+cypher = """
+MATCH (s:ChatSession {id: $session_id})
+CREATE (m:Message {...})
+CREATE (m)-[:IN_SESSION]->(s)
+"""
+```
+
+**If session doesn't exist:** Query fails (by design). API layer should check before calling.
+
+### Mistake 3: Forgetting Timestamps
+
+**WRONG:**
+```python
+# ❌ Забули timestamp
+message = ChatMessage(
+    content=content,
+    role=role,
+    session_id=session_id
+)
+```
+
+**CORRECT:**
+```python
+# ✅ Timestamp обов'язковий
+message = ChatMessage(
+    content=content,
+    role=role,
+    session_id=session_id,
+    timestamp=datetime.now()  # !!
+)
+```
+
+---
+
+## Integration with Other Agents
+
+### State Contract
+
+**Clerk provides:**
+- `message_id: str` - ID записаного повідомлення
+- `recorded: bool` - чи успішно записано
+- `error: str | None` - помилка якщо є
+
+**Clerk expects:**
+- `message_content: str` - текст (required)
+- `message_role: str` - role (required)
+- `session_id: str` - session (required)
+- `metadata: dict` - optional
+
+**Subconscious will use:**
+```python
+if state["recorded"]:
+    message_id = state["message_id"]
+    # Analyze this message
+```
+
+---
+
+## Migration & Schema Evolution
+
+### Adding New Fields to Message
+
+**Safe pattern:**
+```python
+# 1. Update schema
+class ChatMessage(BaseModel):
+    # ... existing fields ...
+    new_field: str | None = None  # Optional!
+
+# 2. Update Cypher (optional field)
+cypher = """
+CREATE (m:Message {
+    ...,
+    new_field: $new_field
+})
+"""
+
+# 3. Old messages без new_field - OK
+```
+
+**NEVER:**
+- ❌ Remove existing fields
+- ❌ Make new fields required (breaks old data)
+- ❌ Change field types
+
+---
+
+## Monitoring
+
+### Key Metrics to Track
+
+1. **Recording success rate** - state["recorded"] = True відсоток
+2. **Recording latency** - avg time to record
+3. **Error rate** - state["error"] not None
+4. **Messages per session** - avg count
+
+### Health Check
+
+```python
+# In repository
+async def health_check(self) -> bool:
+    """Check if Clerk can write to DB."""
+    try:
+        # Try simple write
+        test_message = ChatMessage(
+            content="health_check",
+            role="system",
+            session_id="health_check"
+        )
+        await self.create_message(test_message)
+        return True
+    except:
+        return False
+```
+
+---
+
+## Security Considerations
+
+### What Clerk Does NOT Validate
+
+Clerk записує ВСЕ як є. Validation повинна бути в API layer!
+
+**API layer responsibility:**
+- Length limits (max 10,000 chars)
+- Content sanitization (XSS)
+- Rate limiting
+- Auth check
+
+**Clerk responsibility:**
+- None (just record)
+
+**WHY:** Separation of concerns. Clerk довіряє що API відфільтрував.
+
+---
+
+## Lessons Learned (Production Experience)
+
+### Issue 1: FalkorDB datetime() Not Supported
+
+**Problem:** `datetime($timestamp)` в Cypher → "Unknown function"
+
+**Solution:** Store as ISO string
+```python
+timestamp: $timestamp  # Not datetime($timestamp)
+params["timestamp"] = dt.isoformat()  # Convert to string
+```
+
+**Impact:** CRITICAL - система не працювала без цього.
+
+### Issue 2: Metadata as Nested Dict
+
+**Problem:** FalkorDB не зберігає nested dicts
+```python
+metadata: {"user": {"ip": "..."}}  # ❌ Fails
+```
+
+**Solution:** Convert to string
+```python
+metadata: str(message.metadata)  # ✅ Works
+```
+
+### Issue 3: Missing Session
+
+**Problem:** Намагаємось створити Message для неіснуючої Session
+
+**Solution:** API layer checks:
+```python
+session = await repository.get_session(session_id)
+if not session:
+    raise HTTPException(404, "Session not found")
+```
+
+---
+
+## Quick Reference Checklist
+
+**When implementing Clerk:**
+- [ ] Use MessageRepository for all DB ops
+- [ ] Store timestamps as ISO strings (isoformat())
+- [ ] Convert metadata to string
+- [ ] Create IN_SESSION relationship
+- [ ] Log with "📝 Писарь:" prefix
+- [ ] Handle errors → update state.error
+- [ ] Return dict, not Pydantic
+- [ ] Never modify message content
+- [ ] Never skip messages
+- [ ] Never make decisions
+
+**When debugging Clerk:**
+- [ ] Check FalkorDB connection
+- [ ] Check session exists
+- [ ] Check timestamp format (ISO string)
+- [ ] Check logs for "📝 Писарь"
+- [ ] Check state["recorded"] and state["error"]
+
+---
+
+## API Integration
+
+### Endpoint Pattern
+
+```python
+@router.post("/chat/message")
+async def send_message(
+    request: SendMessageRequest,
+    repository: MessageRepositoryDep
+):
+    # 1. Validate session exists
+    session = await repository.get_session(request.session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    
+    # 2. Create state
+    initial_state = ChatState(
+        message_content=request.content,
+        message_role=request.role,
+        session_id=request.session_id
+    )
+    
+    # 3. Run workflow (через Писаря)
+    workflow = get_chat_workflow()
+    final_state_dict = await workflow.ainvoke(initial_state)
+    final_state = ChatState(**final_state_dict)  # Convert!
+    
+    # 4. Check result
+    if final_state.error:
+        raise HTTPException(500, detail=final_state.error)
+    
+    return ChatMessageResponse(
+        message_id=final_state.message_id,
+        recorded=final_state.recorded
+    )
+```
+
+---
+
+## Future Compatibility
+
+### When Adding Subconscious
+
+Clerk не змінюється! Тільки workflow:
+
+```python
+# Phase 1
+workflow.add_edge("clerk", END)
+
+# Phase 2
+workflow.add_edge("clerk", "subconscious")
+workflow.add_edge("subconscious", END)
+```
+
+Clerk продовжує робити те саме - записувати.
+
+### When Adding Orchestrator
+
+Clerk все ще не змінюється:
+
+```python
+# Phase 3
+workflow.add_edge("clerk", "subconscious")
+workflow.add_edge("subconscious", "orchestrator")
+workflow.add_edge("orchestrator", END)
+```
+
+**Clerk - найстабільніший компонент.** Якщо він працює в Phase 1, він працюватиме і в Phase 10.
+
+---
+
+## Performance Notes
+
+**Clerk is fast:**
+- Single CREATE query (~10-50ms)
+- No complex logic
+- No external API calls
+
+**Bottleneck is NOT Clerk**, it will be:
+- Subconscious (embeddings, similarity)
+- Orchestrator (Gemini API ~1-3s)
+
+**Don't optimize Clerk** - він вже optimal.
+
+---
+
+**Version:** 1.0.0  
+**Created:** November 6, 2025  
+**Status:** Phase 1 implemented and tested  
+**Next:** Phase 2 (Subconscious Agent)

@@ -1,0 +1,229 @@
+---
+description: Subconscious Agent (Підсвідомість) patterns - Phase 2 (Not Yet Implemented)
+alwaysApply: false
+---
+# SUBCONSCIOUS AGENT (ПІДСВІДОМІСТЬ) RULES
+
+**Status:** 🚧 **NOT IMPLEMENTED** - це правила для майбутньої імплементації
+
+---
+
+## Purpose
+
+Підсвідомість - другий агент, який аналізує контекст з історії повідомлень та знаходить релевантні зв'язки для формування контексту.
+
+**Метафора:** Колективна пам'ять, яка знаходить паттерни та зв'язки між подіями.
+
+---
+
+## Responsibility
+
+### ✅ ТІЛЬКИ ЦЕ:
+
+1. **Читати нове повідомлення** з state (від Clerk)
+2. **Шукати схожі повідомлення** в історії через semantic search
+3. **Знаходити зв'язки** (тематичні, референси, послідовність)
+4. **Формувати контекст** для Orchestrator
+5. **Створювати relationships** в графі (REFERENCES, FOLLOWS)
+
+### ❌ ЗАБОРОНЕНО:
+
+- ❌ Записувати нові повідомлення (це Clerk)
+- ❌ Приймати рішення (це Orchestrator)
+- ❌ Генерувати відповіді
+- ❌ Викликати Gemini API
+
+---
+
+## Module Structure (Planned)
+
+```
+backend/app/agents/subconscious/
+├── __init__.py
+├── nodes.py              # subconscious_analyze_node
+├── analyzer.py           # ContextAnalyzer class
+├── embeddings.py         # Embedding generation
+├── similarity.py         # Similarity calculations
+└── schemas.py            # ContextAnalysis model
+```
+
+---
+
+## Technologies
+
+### Embedding Models
+
+**Options:**
+1. **OpenAI Embeddings** - text-embedding-3-small
+2. **Local models** - sentence-transformers
+3. **Gemini Embeddings** - text-embedding-004
+
+**Recommendation:** Start with Gemini (already integrated)
+
+### Vector Similarity
+
+**In FalkorDB:**
+```cypher
+// Store embeddings
+CREATE (m:Message {
+    content: "...",
+    embedding: [0.1, 0.2, ...]  // Array of floats
+})
+
+// Similarity search (future FalkorDB feature?)
+MATCH (m1:Message), (m2:Message)
+WITH m1, m2, vector.similarity(m1.embedding, m2.embedding) as sim
+WHERE sim > 0.7
+RETURN m1, m2, sim
+```
+
+**Alternative:** Store embeddings in Redis/Weaviate, IDs в FalkorDB.
+
+---
+
+## Node Implementation Pattern
+
+```python
+async def subconscious_analyze_node(
+    state: dict, 
+    repository: MessageRepository,
+    analyzer: ContextAnalyzer
+) -> dict:
+    """Analyze context and find relations."""
+    
+    logger.info("🧠 Підсвідомість: Аналізую контекст...")
+    
+    try:
+        # 1. Get message from Clerk
+        message_id = state["message_id"]
+        if not state["recorded"]:
+            logger.warning("⚠️ Message not recorded, skipping analysis")
+            return state
+        
+        # 2. Analyze
+        analysis = await analyzer.analyze_message(
+            message_id=message_id,
+            session_id=state["session_id"]
+        )
+        
+        # 3. Update state
+        state["context"] = analysis.context
+        state["related_messages"] = analysis.related_message_ids
+        state["semantic_similarity"] = analysis.avg_similarity
+        
+        logger.info(
+            f"🧠 Підсвідомість: Знайдено {len(analysis.related_message_ids)} "
+            f"зв'язків (similarity={analysis.avg_similarity:.2f})"
+        )
+        
+    except Exception as e:
+        logger.error(f"🧠 Підсвідомість: Помилка аналізу: {e}")
+        # Graceful degradation - empty context
+        state["context"] = {}
+        state["related_messages"] = []
+    
+    return state
+```
+
+---
+
+## Context Analysis Strategy
+
+### 1. Recent History
+
+```python
+# Останні N повідомлень сесії
+cypher = """
+MATCH (m:Message)-[:IN_SESSION]->(s:ChatSession {id: $session_id})
+RETURN m.id, m.content, m.timestamp
+ORDER BY m.timestamp DESC
+LIMIT $limit
+"""
+```
+
+### 2. Semantic Similarity
+
+```python
+# Знайти схожі по embedding
+similar_messages = await find_similar_by_embedding(
+    current_embedding,
+    threshold=0.7,
+    limit=10
+)
+```
+
+### 3. Relationship Creation
+
+```python
+# Створити зв'язки в графі
+cypher = """
+MATCH (m1:Message {id: $message_id})
+MATCH (m2:Message {id: $related_id})
+CREATE (m1)-[:REFERENCES {similarity: $similarity}]->(m2)
+"""
+```
+
+---
+
+## State Contract
+
+### Subconscious Provides
+
+```python
+state["context"] = {
+    "recent_messages": [...],      # Останні 5-10 messages
+    "similar_messages": [...],     # Схожі по темі
+    "topics": ["history", "war"],  # Виявлені теми
+    "entities": ["Kozak", "Sich"], # Named entities
+}
+
+state["related_messages"] = ["msg1", "msg2"]  # IDs
+state["semantic_similarity"] = 0.82  # Average
+```
+
+### Orchestrator Will Use
+
+```python
+context = state["context"]
+recent = context["recent_messages"]
+topics = context["topics"]
+
+# Build prompt for Gemini with context
+prompt = f"User asked: {user_msg}\nContext: {recent}\nTopics: {topics}"
+```
+
+---
+
+## Performance Targets
+
+**Analysis time:** < 500ms  
+**Embedding generation:** ~100-200ms  
+**Similarity search:** ~50-100ms  
+**Graph traversal:** ~50-100ms
+
+**Total:** ~300-500ms per message
+
+---
+
+## Future Enhancements
+
+### Phase 2.1: Basic Context
+- Recent messages (last 10)
+- Simple keyword matching
+
+### Phase 2.2: Semantic Search
+- Embedding generation
+- Vector similarity
+- Cosine distance
+
+### Phase 2.3: Graph Analysis
+- FOLLOWS relationships
+- Topic clustering
+- Entity extraction
+
+---
+
+**Version:** 0.1.0 (Planning)  
+**Status:** NOT IMPLEMENTED  
+**Blocked by:** Phase 1 completion  
+**Target:** Phase 2

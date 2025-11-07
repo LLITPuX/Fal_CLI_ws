@@ -1,0 +1,389 @@
+---
+description: LangGraph workflow patterns and best practices for Cybersich agents
+alwaysApply: false
+---
+# LANGGRAPH PATTERNS
+
+## Purpose
+
+Загальні правила та patterns для роботи з LangGraph в мультиагентній системі Cybersich Chat.
+
+---
+
+## State Management
+
+### ChatState Schema
+
+**Location:** `backend/app/agents/state.py`
+
+**CRITICAL RULES:**
+
+1. **State is immutable** - кожен node повертає новий state
+2. **Pydantic model required** - для type safety
+3. **All fields optional except inputs** - агенти можуть не заповнити все
+4. **Never delete fields** - тільки додавай нові
+
+**Pattern:**
+```python
+from pydantic import BaseModel, Field
+
+class ChatState(BaseModel):
+    # === Input (Required) ===
+    message_content: str
+    message_role: Literal["user", "assistant", "system"]
+    session_id: str
+    
+    # === Agent outputs (Optional) ===
+    message_id: str | None = None
+    recorded: bool = False
+    context: dict[str, Any] = Field(default_factory=dict)
+    response: str | None = None
+    error: str | None = None
+    
+    class Config:
+        arbitrary_types_allowed = True
+```
+
+**Adding new fields (when adding new agent):**
+```python
+# ✅ GOOD - додаємо нові поля
+class ChatState(BaseModel):
+    # ... existing fields ...
+    
+    # New agent outputs
+    agent_x_result: dict = Field(default_factory=dict)  # NEW
+    agent_x_completed: bool = False  # NEW
+```
+
+**❌ NEVER remove existing fields** - ламає інших агентів!
+
+---
+
+## Node Function Pattern
+
+### Standard Node Signature
+
+```python
+async def agent_node(state: dict, dependencies: ...) -> dict:
+    """Agent node implementation.
+    
+    Args:
+        state: Current state as dict (LangGraph format)
+        dependencies: Injected dependencies (repositories, services, etc.)
+        
+    Returns:
+        Updated state as dict
+    """
+    logger.info("🤖 Agent: Starting...")
+    
+    try:
+        # 1. Extract from state
+        input_data = state["message_content"]
+        
+        # 2. Do work
+        result = await do_something(input_data, dependencies)
+        
+        # 3. Update state
+        state["agent_output"] = result
+        state["agent_completed"] = True
+        state["error"] = None
+        
+        logger.info("✅ Agent: Completed successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Agent: Failed - {e}", exc_info=True)
+        state["agent_completed"] = False
+        state["error"] = str(e)
+    
+    return state
+```
+
+**KEY POINTS:**
+- Always return dict (не Pydantic model!)
+- Update state, don't replace
+- Handle errors gracefully
+- Log before/after
+
+---
+
+## Workflow Definition
+
+### Pattern
+
+**Location:** `backend/app/agents/graph.py`
+
+```python
+from langgraph.graph import END, StateGraph
+from app.agents.state import ChatState
+
+def create_chat_workflow(
+    clerk_repo: MessageRepository,
+    # Future: other dependencies
+) -> StateGraph:
+    """Create compiled LangGraph workflow."""
+    
+    # Define workflow
+    workflow = StateGraph(ChatState)
+    
+    # Add nodes with dependency injection
+    async def clerk_wrapper(state: ChatState) -> ChatState:
+        state_dict = state.model_dump()
+        updated = await clerk_node(state_dict, clerk_repo)
+        return ChatState(**updated)
+    
+    workflow.add_node("clerk", clerk_wrapper)
+    # Future: add_node("subconscious", ...)
+    # Future: add_node("orchestrator", ...)
+    
+    # Define edges
+    workflow.set_entry_point("clerk")
+    workflow.add_edge("clerk", END)  # Phase 1
+    # Future: workflow.add_edge("clerk", "subconscious")
+    
+    return workflow.compile()
+```
+
+**CRITICAL PATTERNS:**
+
+1. **Wrapper functions для dependency injection**
+   ```python
+   # ✅ GOOD
+   async def node_wrapper(state: ChatState) -> ChatState:
+       deps = get_dependencies()
+       state_dict = state.model_dump()
+       updated = await node_function(state_dict, deps)
+       return ChatState(**updated)
+   ```
+
+2. **Dict ↔ Pydantic conversion**
+   ```python
+   # LangGraph працює з dict
+   state_dict = state.model_dump()  # Pydantic → dict
+   updated_dict = await node(state_dict)
+   result = ChatState(**updated_dict)  # dict → Pydantic
+   ```
+
+---
+
+## Common Pitfalls & Solutions
+
+### Issue 1: workflow.ainvoke() Returns Dict
+
+**Problem:**
+```python
+final_state = await workflow.ainvoke(initial_state)
+# final_state is AddableValuesDict, NOT ChatState!
+if final_state.error:  # ❌ AttributeError!
+```
+
+**Solution:**
+```python
+final_state_dict = await workflow.ainvoke(initial_state)
+final_state = ChatState(**final_state_dict)  # Convert!
+if final_state.error:  # ✅ Works
+```
+
+**ALWAYS convert dict → Pydantic after ainvoke().**
+
+### Issue 2: Shared Mutable Objects
+
+**Problem:**
+```python
+# ❌ BAD - mutable default
+class ChatState(BaseModel):
+    context: dict = {}  # SHARED between all states!
+```
+
+**Solution:**
+```python
+# ✅ GOOD - factory function
+from pydantic import Field
+
+class ChatState(BaseModel):
+    context: dict = Field(default_factory=dict)
+```
+
+### Issue 3: Blocking Operations in Async Context
+
+**Problem:**
+```python
+async def node(state):
+    result = requests.get(url)  # ❌ Blocking!
+```
+
+**Solution:**
+```python
+async def node(state):
+    async with httpx.AsyncClient() as client:
+        result = await client.get(url)  # ✅ Async
+```
+
+**For sync libraries (FalkorDB):**
+```python
+loop = asyncio.get_event_loop()
+result = await loop.run_in_executor(None, sync_function)
+```
+
+---
+
+## Initialization Pattern
+
+### Global Workflow Instance
+
+**Location:** `backend/app/main.py`
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    falkordb = await init_falkordb_client()
+    
+    # Initialize agents
+    clerk_repo = MessageRepository(falkordb)
+    init_chat_workflow(clerk_repo)
+    logger.info("🤖 Multi-agent chat system initialized")
+    
+    yield
+    
+    # Shutdown
+    await close_falkordb_client()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+**NEVER:**
+- ❌ Create workflow per request
+- ❌ Re-initialize agents
+- ❌ Share state between requests
+
+**ALWAYS:**
+- ✅ Singleton workflow instance
+- ✅ Initialize in lifespan
+- ✅ Fresh state per request
+
+---
+
+## Error Propagation
+
+### Through State
+
+**Pattern:**
+```python
+# Agent 1 fails
+state["error"] = "Agent 1 failed: reason"
+state["agent1_completed"] = False
+
+# Agent 2 checks
+if state.get("error"):
+    logger.warning("⚠️ Previous agent failed, skipping")
+    return state  # Pass through
+
+# Or handle and continue
+if state.get("error"):
+    logger.info("🔄 Recovering from error...")
+    state["error"] = None  # Clear
+    # ... recovery logic ...
+```
+
+**Decision:** Fail fast vs graceful degradation?
+- **Clerk fails** → Fail fast (can't continue without recording)
+- **Subconscious fails** → Continue (use empty context)
+- **Orchestrator fails** → Return error to user
+
+---
+
+## Conditional Edges (Future)
+
+### Dynamic Routing
+
+```python
+def should_use_tool(state: ChatState) -> str:
+    """Decide next node based on state."""
+    if "use calculator" in state.message_content.lower():
+        return "tool_caller"
+    else:
+        return "orchestrator"
+
+workflow.add_conditional_edges(
+    "subconscious",
+    should_use_tool,
+    {
+        "tool_caller": "tool_caller_node",
+        "orchestrator": "orchestrator_node"
+    }
+)
+```
+
+---
+
+## Debugging
+
+### Visualize Workflow
+
+```python
+from langchain_core.runnables.graph import MermaidDrawMethod
+
+# Get mermaid diagram
+diagram = workflow.get_graph().draw_mermaid()
+print(diagram)
+
+# Or draw to file
+workflow.get_graph().draw_mermaid_png(
+    output_file_path="workflow.png"
+)
+```
+
+### State Inspection
+
+```python
+# In node
+logger.debug(f"📊 State: {state}")
+logger.debug(f"📊 Keys: {state.keys()}")
+logger.debug(f"📊 Message ID: {state.get('message_id', 'N/A')}")
+```
+
+---
+
+## Version Compatibility
+
+**LangGraph:** 0.2.28  
+**langchain-core:** 0.3.10
+
+**IMPORTANT:** LangGraph API швидко змінюється. При оновленні:
+- Check breaking changes
+- Test всю flow
+- Update rules якщо patterns змінились
+
+---
+
+## Performance Optimization
+
+### Parallel Execution (Future)
+
+For independent agents:
+```python
+from langgraph.graph import StateGraph, END
+
+# Instead of sequential
+workflow.add_edge("clerk", "subconscious")
+
+# Parallel (if agents independent)
+workflow.add_edge("clerk", ["analyzer", "summarizer"])
+workflow.add_edge(["analyzer", "summarizer"], "orchestrator")
+```
+
+**Use when:** Agents don't depend on each other's outputs.
+
+---
+
+## Resources
+
+**Official Docs:** https://langchain-ai.github.io/langgraph/  
+**Examples:** https://github.com/langchain-ai/langgraph/tree/main/examples  
+**Our Implementation:** `backend/app/agents/`
+
+---
+
+**Version:** 1.0.0  
+**Last Updated:** November 6, 2025  
+**Status:** Phase 1 patterns documented

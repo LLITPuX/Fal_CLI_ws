@@ -1,0 +1,470 @@
+---
+description: Orchestrator Agent (Оркестратор) patterns - Phase 3 (Not Yet Implemented)
+alwaysApply: false
+---
+# ORCHESTRATOR AGENT (ОРКЕСТРАТОР) RULES
+
+**Status:** 🚧 **NOT IMPLEMENTED** - це правила для майбутньої імплементації
+
+---
+
+## Purpose
+
+Оркестратор - третій агент, який приймає рішення на основі контексту від Підсвідомості та генерує фінальну відповідь користувачу.
+
+**Метафора:** Козацький отаман, що приймає стратегічні рішення на основі розвідки.
+
+---
+
+## Responsibility
+
+### ✅ ТІЛЬКИ ЦЕ:
+
+1. **Отримати контекст** від Subconscious
+2. **Проаналізувати** що користувач хоче
+3. **Вирішити дію** (respond, search, clarify, use_tool)
+4. **Згенерувати відповідь** через Gemini (якщо respond)
+5. **Викликати tools** (якщо use_tool)
+6. **Записати відповідь** через Clerk
+
+### ❌ ЗАБОРОНЕНО:
+
+- ❌ Писати в БД напряму (через Clerk!)
+- ❌ Робити context analysis (це Subconscious)
+- ❌ Шукати в історії напряму (запитай Subconscious)
+
+---
+
+## Module Structure (Planned)
+
+```
+backend/app/agents/orchestrator/
+├── __init__.py
+├── nodes.py              # orchestrator_decide_node, orchestrator_execute_node
+├── router.py             # ActionRouter class
+├── responder.py          # Response generation через Gemini
+├── tools.py              # Tool calling framework
+└── schemas.py            # OrchestratorDecision, Action enum
+```
+
+---
+
+## Action Types
+
+### Action Enum
+
+```python
+from enum import Enum
+
+class Action(str, Enum):
+    RESPOND = "respond"              # Згенерувати відповідь
+    SEARCH = "search"                # Пошук в knowledge base
+    ASK_CLARIFICATION = "clarify"    # Попросити уточнення
+    USE_TOOL = "tool"                # Викликати зовнішній tool
+    DELEGATE = "delegate"            # Передати іншому агенту (future)
+```
+
+### Decision Logic
+
+```python
+async def decide_action(
+    message: str,
+    context: dict,
+    related_count: int
+) -> Action:
+    """Decide what action to take."""
+    
+    # Rule-based (Phase 3.1)
+    if "?" in message and related_count == 0:
+        return Action.ASK_CLARIFICATION
+    
+    if "шукай" in message.lower() or "find" in message.lower():
+        return Action.SEARCH
+    
+    # Default
+    return Action.RESPOND
+    
+    # Future (Phase 3.2): LLM-based decision
+    # decision = await llm.decide(message, context)
+```
+
+---
+
+## Response Generation
+
+### Integration with GeminiService
+
+```python
+from app.services.gemini_service import GeminiService
+
+async def generate_response(
+    user_message: str,
+    context: dict,
+    gemini: GeminiService
+) -> str:
+    """Generate response using Gemini with context."""
+    
+    # Build prompt with context
+    prompt = f"""
+    User message: {user_message}
+    
+    Relevant context from history:
+    {format_context(context)}
+    
+    Generate helpful response in Ukrainian.
+    """
+    
+    # Call Gemini (через існуючий CLI)
+    response = await gemini.generate(prompt)
+    
+    return response
+```
+
+### Context Formatting
+
+```python
+def format_context(context: dict) -> str:
+    """Format context for Gemini prompt."""
+    
+    parts = []
+    
+    # Recent messages
+    if recent := context.get("recent_messages"):
+        parts.append("Recent conversation:")
+        for msg in recent[-3:]:  # Last 3
+            parts.append(f"- {msg['role']}: {msg['content'][:100]}")
+    
+    # Topics
+    if topics := context.get("topics"):
+        parts.append(f"Topics discussed: {', '.join(topics)}")
+    
+    return "\n".join(parts)
+```
+
+---
+
+## Node Implementation Pattern
+
+```python
+async def orchestrator_decide_node(
+    state: dict,
+    router: ActionRouter,
+    gemini: GeminiService
+) -> dict:
+    """Decide action and execute."""
+    
+    logger.info("🎯 Оркестратор: Приймаю рішення...")
+    
+    try:
+        # 1. Get context from Subconscious
+        context = state.get("context", {})
+        message = state["message_content"]
+        
+        # 2. Decide action
+        action = await router.decide(message, context)
+        state["action"] = action.value
+        
+        logger.info(f"🎯 Оркестратор: Вирішив '{action.value}'")
+        
+        # 3. Execute action
+        if action == Action.RESPOND:
+            response = await generate_response(message, context, gemini)
+            state["response"] = response
+            
+            # Record assistant message через Clerk
+            # (trigger new workflow with role="assistant")
+        
+        elif action == Action.SEARCH:
+            results = await search_knowledge_base(message)
+            state["search_results"] = results
+            state["response"] = format_search_results(results)
+        
+        elif action == Action.ASK_CLARIFICATION:
+            state["response"] = generate_clarification_question(message, context)
+        
+    except Exception as e:
+        logger.error(f"🎯 Оркестратор: Помилка: {e}")
+        state["error"] = f"Decision failed: {e}"
+        state["response"] = "Вибачте, сталася помилка. Спробуйте ще раз."
+    
+    return state
+```
+
+---
+
+## Recording Assistant Response
+
+### Pattern (через Clerk)
+
+**WRONG:**
+```python
+# ❌ Orchestrator пише напряму в БД
+await repository.create_message(assistant_msg)
+```
+
+**CORRECT:**
+```python
+# ✅ Через окремий workflow
+assistant_state = ChatState(
+    message_content=state["response"],
+    message_role="assistant",
+    session_id=state["session_id"]
+)
+
+# Тригер Clerk для assistant message
+clerk_workflow = get_chat_workflow()  # Only Clerk
+await clerk_workflow.ainvoke(assistant_state)
+```
+
+**WHY:** Clerk - єдине джерело правди для запису. Всі через нього.
+
+---
+
+## Tool Calling Framework
+
+### Tool Definition
+
+```python
+from typing import Protocol
+
+class Tool(Protocol):
+    name: str
+    description: str
+    
+    async def execute(self, args: dict) -> dict:
+        """Execute tool with arguments."""
+        ...
+
+# Example tools
+class CalculatorTool:
+    name = "calculator"
+    description = "Perform math calculations"
+    
+    async def execute(self, args: dict) -> dict:
+        expression = args["expression"]
+        result = eval(expression)  # Safe eval!
+        return {"result": result}
+
+class SearchTool:
+    name = "search"
+    description = "Search in knowledge base"
+    
+    async def execute(self, args: dict) -> dict:
+        query = args["query"]
+        results = await search_db(query)
+        return {"results": results}
+```
+
+### Tool Router
+
+```python
+class ToolRouter:
+    def __init__(self):
+        self.tools: dict[str, Tool] = {
+            "calculator": CalculatorTool(),
+            "search": SearchTool(),
+        }
+    
+    async def execute_tool(self, tool_name: str, args: dict) -> dict:
+        """Execute tool by name."""
+        if tool_name not in self.tools:
+            raise ValueError(f"Unknown tool: {tool_name}")
+        
+        tool = self.tools[tool_name]
+        return await tool.execute(args)
+```
+
+---
+
+## State Contract
+
+### Orchestrator Receives
+
+```python
+# From Subconscious
+state["context"] = {
+    "recent_messages": [...],
+    "similar_messages": [...],
+    "topics": [...],
+}
+state["related_messages"] = [...]
+state["semantic_similarity"] = 0.8
+```
+
+### Orchestrator Provides
+
+```python
+state["action"] = "respond|search|clarify|tool"
+state["response"] = "Generated response text"
+state["tool_used"] = "calculator"  # If tool was called
+state["tool_result"] = {...}       # Tool output
+```
+
+---
+
+## Decision Logic
+
+### Rule-Based (Phase 3.1)
+
+```python
+class RuleBasedRouter:
+    async def decide(self, message: str, context: dict) -> Action:
+        """Simple rule-based routing."""
+        
+        # Questions without context → clarify
+        if "?" in message and not context.get("recent_messages"):
+            return Action.ASK_CLARIFICATION
+        
+        # Math expressions → use calculator
+        if any(op in message for op in ["+", "-", "*", "/"]):
+            return Action.USE_TOOL
+        
+        # Search keywords → search
+        if any(kw in message.lower() for kw in ["шукай", "знайди", "find"]):
+            return Action.SEARCH
+        
+        # Default → respond
+        return Action.RESPOND
+```
+
+### LLM-Based (Phase 3.2)
+
+```python
+class LLMBasedRouter:
+    async def decide(self, message: str, context: dict) -> Action:
+        """Use Gemini to decide action."""
+        
+        prompt = f"""
+        Decide action for this message:
+        Message: {message}
+        Context: {context}
+        
+        Choose one: respond, search, clarify, tool
+        Respond with JSON: {{"action": "respond", "reasoning": "..."}}
+        """
+        
+        result = await gemini.generate(prompt)
+        decision = json.loads(result)
+        
+        return Action(decision["action"])
+```
+
+---
+
+## Performance Targets
+
+**Decision time:** < 100ms (rule-based) або ~1s (LLM-based)  
+**Response generation:** ~1-3s (Gemini API)  
+**Tool execution:** varies (calculator ~1ms, search ~100ms)
+
+**Total:** ~1-5 seconds per message (acceptable для chat)
+
+---
+
+## Error Handling
+
+### Graceful Degradation
+
+```python
+try:
+    response = await generate_response(message, context, gemini)
+except GeminiAPIError as e:
+    logger.error(f"Gemini API failed: {e}")
+    # Fallback
+    response = "Вибачте, сталася тимчасова проблема. Спробуйте пізніше."
+
+try:
+    tool_result = await tool_router.execute(tool_name, args)
+except ToolError as e:
+    # Fallback to regular response
+    response = await generate_response_without_tool(message, context)
+```
+
+---
+
+## Integration Points
+
+### With Existing GeminiService
+
+```python
+from app.services.gemini_service import GeminiService
+
+# Existing service is for structuring
+gemini = GeminiService()  
+
+# We need chat generation
+# Option 1: Extend GeminiService
+async def generate_chat_response(
+    self, 
+    messages: list[dict],
+    system_prompt: str
+) -> str:
+    """New method for chat."""
+    ...
+
+# Option 2: New service
+class GeminiChatService:
+    async def generate(self, prompt: str) -> str:
+        """Generate conversational response."""
+        ...
+```
+
+---
+
+## Monitoring
+
+### Key Metrics
+
+1. **Action distribution** - % respond vs search vs tool
+2. **Response quality** - user feedback (future)
+3. **Latency** - time to generate response
+4. **Error rate** - failed responses
+5. **Context utilization** - чи використовується контекст від Subconscious
+
+---
+
+## Testing Strategy
+
+### Unit Tests
+
+```python
+@pytest.mark.asyncio
+async def test_orchestrator_decide_respond():
+    state = {
+        "message_content": "Розкажи про козаків",
+        "context": {"topics": ["history"]},
+        "related_messages": ["msg1"]
+    }
+    
+    result = await orchestrator_decide_node(state, mock_router, mock_gemini)
+    
+    assert result["action"] == "respond"
+    assert result["response"] is not None
+    assert "козак" in result["response"].lower()
+```
+
+---
+
+## Future: Multi-Turn Reasoning
+
+### Chain of Thought
+
+```python
+# Orchestrator може запускати sub-workflows
+thought_process = [
+    await think_step_1(message, context),
+    await think_step_2(step1_result),
+    await synthesize(step2_result)
+]
+
+final_response = thought_process[-1]
+```
+
+**For complex queries** що потребують глибокого reasoning.
+
+---
+
+**Version:** 0.1.0 (Planning)  
+**Status:** NOT IMPLEMENTED  
+**Blocked by:** Phase 2 (Subconscious)  
+**Target:** Phase 3
