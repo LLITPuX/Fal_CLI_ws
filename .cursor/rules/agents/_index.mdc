@@ -46,35 +46,48 @@ LangGraph Workflow
 
 ## Agent Modules
 
-### Location
+### Chat Pipeline (Multi-Agent System)
+
 ```
 backend/app/agents/
 ├── __init__.py
 ├── state.py           # Shared ChatState
 ├── graph.py           # LangGraph workflow
 │
-├── clerk/             # Phase 1 ✅
+├── clerk/             # Phase 1 ✅ Chat Flow
 │   ├── nodes.py
 │   ├── repository.py
 │   └── schemas.py
 │
-├── subconscious/      # Phase 2 ⏳
+├── subconscious/      # Phase 2 ⏳ Chat Flow
 │   ├── nodes.py
 │   ├── analyzer.py
 │   └── schemas.py
 │
-└── orchestrator/      # Phase 3 ⏳
+└── orchestrator/      # Phase 3 ⏳ Chat Flow
     ├── nodes.py
     ├── router.py
     └── schemas.py
 ```
 
+### Standalone Agent (Not in Chat Flow)
+
+```
+backend/app/services/
+└── gemini_service.py  # Researcher (exists as GeminiService)
+                       # Future: move to agents/researcher/
+```
+
 ### Rules Files
 
+**Chat Pipeline:**
 - **[langgraph-patterns.mdc](langgraph-patterns.mdc)** - Загальні LangGraph patterns
-- **[clerk.mdc](clerk.mdc)** - Писарь Agent rules
-- **[subconscious.mdc](subconscious.mdc)** - Підсвідомість Agent rules (майбутнє)
-- **[orchestrator.mdc](orchestrator.mdc)** - Оркестратор Agent rules (майбутнє)
+- **[clerk.mdc](clerk.mdc)** - Писарь Agent (Phase 1)
+- **[subconscious.mdc](subconscious.mdc)** - Підсвідомість Agent (Phase 2 - planning)
+- **[orchestrator.mdc](orchestrator.mdc)** - Оркестратор Agent (Phase 3 - planning)
+
+**Standalone:**
+- **[researcher.mdc](researcher.mdc)** - Дослідник Agent (research playground)
 
 ---
 
@@ -112,7 +125,9 @@ class ChatState(BaseModel):
 
 ## Agent Responsibilities
 
-### Писарь (Clerk) - Phase 1 ✅
+### Chat Pipeline Agents
+
+#### Писарь (Clerk) - Phase 1 ✅
 
 **ТІЛЬКИ:**
 - ✅ Записати повідомлення в FalkorDB
@@ -125,7 +140,7 @@ class ChatState(BaseModel):
 - ❌ Модифікувати content
 - ❌ Фільтрувати повідомлення
 
-### Підсвідомість (Subconscious) - Phase 2 ⏳
+#### Підсвідомість (Subconscious) - Phase 2 ⏳
 
 **ТІЛЬКИ:**
 - ✅ Читати історію з графа
@@ -138,7 +153,7 @@ class ChatState(BaseModel):
 - ❌ Приймати рішення (це Orchestrator)
 - ❌ Генерувати відповіді
 
-### Оркестратор (Orchestrator) - Phase 3 ⏳
+#### Оркестратор (Orchestrator) - Phase 3 ⏳
 
 **ТІЛЬКИ:**
 - ✅ Аналізувати контекст від Підсвідомості
@@ -149,6 +164,27 @@ class ChatState(BaseModel):
 **ЗАБОРОНЕНО:**
 - ❌ Писати в БД напряму (тільки через Clerk)
 - ❌ Робити context analysis (це Subconscious)
+
+---
+
+### Standalone Agent
+
+#### Дослідник (Researcher) - Exists ✅
+
+**ПРИЗНАЧЕННЯ:** Research playground для експериментів з моделями
+
+**ТІЛЬКИ:**
+- ✅ Структурувати неструктурований текст
+- ✅ Тестувати різні моделі та промпти
+- ✅ Збирати метрики (якість, швидкість, вартість)
+- ✅ Зберігати результати для аналізу
+
+**ЗАБОРОНЕНО:**
+- ❌ Інтегруватись в chat flow (окремий сервіс)
+- ❌ Використовувати chat context
+- ❌ Автоматична обробка (тільки manual через UI)
+
+**NOTE:** Може стати tool для Orchestrator в майбутньому, але це опціонально.
 
 ---
 
