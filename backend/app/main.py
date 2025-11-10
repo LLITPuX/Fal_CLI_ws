@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.clerk.repository import MessageRepository
 from app.agents.graph import init_chat_workflow
+from app.agents.subconscious.repository import SubconsciousRepository
 from app.api import router
 from app.api.chat_routes import router as chat_router
 from app.api.falkordb_routes import router as falkordb_router
@@ -50,9 +51,10 @@ async def lifespan(app: FastAPI):
         await load_default_templates(client)
         
         # Initialize LangGraph workflow for chat agents
-        repository = MessageRepository(client)
-        init_chat_workflow(repository)
-        logger.info("🤖 Multi-agent chat system (Писарь) initialized")
+        clerk_repo = MessageRepository(client)
+        subconscious_repo = SubconsciousRepository(client)
+        init_chat_workflow(clerk_repo, subconscious_repo)
+        logger.info("🤖 Multi-agent chat system (Phase 2: Clerk + Subconscious) initialized")
     except Exception as e:
         logger.error(f"Failed to initialize FalkorDB: {e}", exc_info=True)
         logger.warning("Continuing without FalkorDB support")
