@@ -64,6 +64,22 @@ class Settings(BaseSettings):
     falkordb_graph_name: str = os.getenv("FALKORDB_GRAPH_NAME", "gemini_graph")
     falkordb_max_query_time: int = int(os.getenv("FALKORDB_MAX_QUERY_TIME", "30"))
 
+    # OpenAI Settings (for Subconscious Agent)
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_embedding_dimensions: int = 1536
+    openai_entity_model: str = "gpt-4o-mini"
+
+    # Subconscious Agent Settings
+    subconscious_chunk_size: int = 800
+    subconscious_chunk_overlap: float = 0.15  # 15%
+    subconscious_similarity_threshold: float = 0.7
+    subconscious_max_similar_chunks: int = 10
+    subconscious_recent_messages_limit: int = 10
+    subconscious_default_time_window_days: int | None = None  # None = all time
+    subconscious_batch_size: int = 100  # Max chunks per API batch
+    subconscious_timeout: int = 30  # seconds
+
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
