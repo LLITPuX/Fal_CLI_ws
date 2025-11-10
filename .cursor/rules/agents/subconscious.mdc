@@ -1,83 +1,727 @@
 ---
-description: Subconscious Agent (Підсвідомість) patterns - Phase 2 (Not Yet Implemented)
+description: Subconscious Agent (Підсвідомість) patterns - Phase 2 Architecture
 alwaysApply: false
 ---
 # SUBCONSCIOUS AGENT (ПІДСВІДОМІСТЬ) RULES
 
-**Status:** 🚧 **NOT IMPLEMENTED** - це правила для майбутньої імплементації
+**Status:** 🏗️ **IN DESIGN** - архітектура затверджена, готова до імплементації
 
 ---
 
 ## Purpose
 
-Підсвідомість - другий агент, який аналізує контекст з історії повідомлень та знаходить релевантні зв'язки для формування контексту.
+Підсвідомість - другий агент в pipeline, який аналізує кожне повідомлення, розкладає на семантичні chunks та entities, знаходить зв'язки в temporal knowledge graph та формує багатий контекст для Orchestrator.
 
-**Метафора:** Колективна пам'ять, яка знаходить паттерни та зв'язки між подіями.
+**Метафора:** Безмежна колективна пам'ять з temporal awareness, яка знаходить паттерни та зв'язки між подіями незалежно від часу їх виникнення.
 
 ---
 
-## Responsibility
+## Responsibility (Detailed Pipeline)
 
-### ✅ ТІЛЬКИ ЦЕ:
+### ✅ ТІЛЬКИ ЦЕ (5 кроків):
 
-1. **Читати нове повідомлення** з state (від Clerk)
-2. **Шукати схожі повідомлення** в історії через semantic search
-3. **Знаходити зв'язки** (тематичні, референси, послідовність)
-4. **Формувати контекст** для Orchestrator
-5. **Створювати relationships** в графі (REFERENCES, FOLLOWS)
+1. **TEXT PROCESSOR**: Розкласти message на semantic chunks (не fixed-size!)
+2. **EMBEDDINGS GENERATOR**: Створити vector embeddings через OpenAI (batch)
+3. **ENTITY EXTRACTOR**: Витягти entities через OpenAI (окремий node)
+4. **SIMILARITY SEARCH**: Знайти схожі chunks/entities в temporal graph
+5. **CONTEXT BUILDER**: Сформувати багатий контекст для Orchestrator
 
 ### ❌ ЗАБОРОНЕНО:
 
-- ❌ Записувати нові повідомлення (це Clerk)
-- ❌ Приймати рішення (це Orchestrator)
-- ❌ Генерувати відповіді
-- ❌ Викликати Gemini API
+- ❌ Записувати нові messages (це Clerk)
+- ❌ Приймати рішення що робити далі (це Orchestrator)
+- ❌ Генерувати відповіді користувачу
+- ❌ Викликати Gemini для generation (тільки OpenAI для embeddings/entities)
 
 ---
 
-## Module Structure (Planned)
+## Module Structure
 
 ```
 backend/app/agents/subconscious/
-├── __init__.py
-├── nodes.py              # subconscious_analyze_node
-├── analyzer.py           # ContextAnalyzer class
-├── embeddings.py         # Embedding generation
-├── similarity.py         # Similarity calculations
-└── schemas.py            # ContextAnalysis model
+├── __init__.py              # Public API
+├── nodes.py                 # subconscious_analyze_node (main LangGraph node)
+├── text_processor.py        # Semantic chunking logic
+├── embeddings_service.py    # OpenAI embeddings (batch)
+├── entity_extractor.py      # OpenAI entity extraction
+├── similarity_searcher.py   # Cosine similarity search
+├── graph_builder.py         # Create Chunk/Entity nodes + relationships
+├── context_formatter.py     # Format context for Orchestrator
+├── repository.py            # FalkorDB CRUD for chunks/entities
+└── schemas.py               # Chunk, Entity, ContextAnalysis models
 ```
 
 ---
 
-## Technologies
+## Key Architecture Principles
 
-### Embedding Models
+### 1. NO SESSIONS - Temporal Graph
 
-**Options:**
-1. **OpenAI Embeddings** - text-embedding-3-small
-2. **Local models** - sentence-transformers
-3. **Gemini Embeddings** - text-embedding-004
+**Замість sessions використовуємо temporal timestamps:**
 
-**Recommendation:** Start with Gemini (already integrated)
+```python
+# ❌ WRONG - Session-based memory
+MATCH (m:Message)-[:IN_SESSION]->(s:ChatSession {id: $session_id})
+WHERE m.timestamp > $recent_threshold
+RETURN m
 
-### Vector Similarity
-
-**In FalkorDB:**
-```cypher
-// Store embeddings
-CREATE (m:Message {
-    content: "...",
-    embedding: [0.1, 0.2, ...]  // Array of floats
-})
-
-// Similarity search (future FalkorDB feature?)
-MATCH (m1:Message), (m2:Message)
-WITH m1, m2, vector.similarity(m1.embedding, m2.embedding) as sim
-WHERE sim > 0.7
-RETURN m1, m2, sim
+# ✅ CORRECT - Temporal graph (like Graphiti)
+MATCH (m:Message)
+WHERE m.timestamp > $time_window_start
+  AND m.valid_at <= $current_time
+  AND (m.invalid_at IS NULL OR m.invalid_at > $current_time)
+RETURN m
+ORDER BY m.timestamp DESC
 ```
 
-**Alternative:** Store embeddings in Redis/Weaviate, IDs в FalkorDB.
+**Причина:** Безмежна пам'ять. Користувач може згадати щось з розмови 3 місяці тому, не знаючи session_id.
+
+### 2. Semantic Chunking (Not Fixed-Size)
+
+**Розбивати текст по смислових границях:**
+
+- По параграфах (`\n\n`)
+- По реченнях (завершені думки)
+- З урахуванням markdown структури (headings, code blocks)
+- Dynamic overlap based on content
+
+**Приклад:**
+```
+User paste documentation (5000 chars):
+"# Installation\n\nTo install...\n\n## Prerequisites\n\nYou need..."
+
+↓ Semantic chunking
+
+Chunk 1: "# Installation\nTo install..." (цілий розділ)
+Chunk 2: "## Prerequisites\nYou need..." (підрозділ)
+Chunk 3: "## Configuration\nEdit..." (наступний підрозділ)
+```
+
+### 3. Orchestrator Waits (Synchronous Mode)
+
+```
+Clerk (15ms) → Subconscious (400ms) → Orchestrator (2000ms)
+                    ↑
+              BLOCKS HERE
+          Orchestrator отримує
+          ПОВНИЙ контекст
+```
+
+**НЕ event-driven**, а sequential pipeline.
+
+### 4. Entity Extraction Included
+
+Entities є **first-class citizens** в графі поряд з chunks.
+
+---
+
+## Temporal Graph Schema
+
+### Node Types
+
+```cypher
+// Існуючий з Phase 1
+(:Message {
+    id: "uuid",
+    content: "повний текст",
+    role: "user|assistant|system",
+    timestamp: "ISO8601",
+    
+    // Temporal fields (NEW - Graphiti pattern)
+    valid_at: "ISO8601",        // Коли facts стали актуальними
+    invalid_at: "ISO8601|NULL", // Коли застаріли (NULL = досі актуальні)
+    
+    // Processing metadata
+    language: "uk|en|ru|...",
+    content_length: number,
+    is_processed: boolean       // Чи оброблено Підсвідомістю
+})
+
+// НОВИЙ: Semantic Chunk
+(:Chunk {
+    id: "uuid",
+    content: "частина тексту",
+    position: number,           // Порядковий номер в message
+    char_start: number,
+    char_end: number,
+    chunk_type: "paragraph|sentence|code|heading",
+    
+    // Temporal
+    created_at: "ISO8601",
+    valid_at: "ISO8601",
+    invalid_at: "ISO8601|NULL",
+    
+    // Embeddings
+    embedding: [float, ...],    // 1536-dim vector (OpenAI text-embedding-3-small)
+    embedding_model: "text-embedding-3-small",
+    embedding_created_at: "ISO8601"
+})
+
+// НОВИЙ: Entity (Named Entities)
+(:Entity {
+    id: "uuid",
+    name: "original name",      // Оригінальна форма
+    canonical_name: "normalized", // Нормалізована (lowercase, trimmed)
+    type: "PERSON|ORG|LOCATION|TECH|CONCEPT|...",
+    
+    // Temporal
+    first_seen: "ISO8601",      // Коли вперше згадали
+    last_seen: "ISO8601",       // Останнє згадування
+    valid_at: "ISO8601",
+    invalid_at: "ISO8601|NULL",
+    
+    // Embeddings
+    embedding: [float, ...],
+    embedding_model: "text-embedding-3-small",
+    
+    // Metadata
+    mention_count: number,      // Скільки разів згадували
+    confidence: float           // Впевненість extraction (0.0-1.0)
+})
+```
+
+### Relationship Types
+
+```cypher
+// Chunk → Message
+(:Chunk)-[:PART_OF {
+    position: number,
+    created_at: "ISO8601"
+}]->(:Message)
+
+// Chunk ↔ Chunk (Semantic Similarity)
+(:Chunk)-[:SIMILAR_TO {
+    similarity: float,          // Cosine similarity (0.0-1.0)
+    created_at: "ISO8601",
+    algorithm: "cosine"
+}]-(:Chunk)
+
+// Chunk → Entity
+(:Chunk)-[:MENTIONS {
+    position: number,           // Позиція в chunk
+    context: "surrounding text",
+    confidence: float
+}]->(:Entity)
+
+// Message → Entity (Aggregated)
+(:Message)-[:DISCUSSES {
+    mention_count: number,
+    salience: float,            // Важливість entity в message
+    created_at: "ISO8601"
+}]->(:Entity)
+
+// Entity ↔ Entity (Co-occurrence)
+(:Entity)-[:RELATED_TO {
+    co_occurrence_count: number,
+    strength: float,            // Сила зв'язку
+    contexts: ["msg_id1", "msg_id2"]
+}]-(:Entity)
+
+// Message ↔ Message (через схожі chunks)
+(:Message)-[:SEMANTICALLY_RELATED {
+    similarity: float,
+    via_chunks: ["chunk1", "chunk2"],
+    created_at: "ISO8601"
+}]-(:Message)
+
+// Temporal sequence (опціонально)
+(:Message)-[:FOLLOWED_BY {
+    time_delta_seconds: number
+}]->(:Message)
+```
+
+---
+
+## Technologies Stack
+
+### OpenAI Models
+
+```python
+# 1. Embeddings
+model: "text-embedding-3-small"
+dimensions: 1536
+cost: ~$0.00002 per 1K tokens
+max_input: 8,191 tokens
+
+# 2. Entity Extraction
+model: "gpt-4o-mini"  # Швидкий і дешевий для NER
+cost: ~$0.15 per 1M input tokens
+structured_output: JSON mode
+```
+
+### Vector Storage Strategy
+
+**Option A: FalkorDB native (якщо підтримує vector ops)**
+```cypher
+// Store as array property
+CREATE (c:Chunk {embedding: [0.1, 0.2, ..., 0.9]})
+
+// Search (якщо є vector functions)
+MATCH (c:Chunk)
+WITH c, vector.cosine(c.embedding, $query_embedding) AS similarity
+WHERE similarity > 0.7
+RETURN c
+ORDER BY similarity DESC
+LIMIT 10
+```
+
+**Option B: In-Memory (якщо FalkorDB не підтримує)**
+```python
+# Витягнути всі embeddings
+chunks = await repo.get_all_chunks_with_embeddings()
+
+# NumPy/scikit-learn cosine similarity
+from sklearn.metrics.pairwise import cosine_similarity
+similarities = cosine_similarity([query_emb], [c.embedding for c in chunks])
+
+# Top-K
+top_indices = similarities[0].argsort()[-10:][::-1]
+```
+
+**Option C: Redis Stack VSS Module (якщо треба scale)**
+```bash
+# RediSearch with vector similarity
+FT.SEARCH idx:chunks 
+  "*=>[KNN 10 @embedding $vec AS score]" 
+  PARAMS 2 vec <binary>
+  RETURN 3 id content score
+```
+
+**Рекомендація:** Почати з **Option B** (працює завжди), потім перевірити **Option A**, якщо треба швидше - **Option C**.
+
+---
+
+## Semantic Chunking Strategy
+
+### Algorithm (LangChain-inspired)
+
+```python
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+class SemanticTextSplitter:
+    """Split text по смислових границях."""
+    
+    def __init__(self):
+        self.separators = [
+            "\n\n",      # Параграфи (найвищий пріоритет)
+            "\n",        # Рядки
+            ". ",        # Речення
+            "! ",
+            "? ",
+            "; ",
+            ": ",
+            ", ",
+            " ",         # Слова (найнижчий пріоритет)
+        ]
+    
+    async def split(self, text: str, max_chunk_size: int = 800) -> list[Chunk]:
+        """
+        Розбити текст на semantic chunks.
+        
+        Logic:
+        1. Спробувати розділити по \n\n (параграфи)
+        2. Якщо параграф > max_chunk_size, розділити по реченнях
+        3. Якщо речення > max_chunk_size, розділити по словах
+        4. Додати overlap між chunks (10-15%)
+        """
+        splitter = RecursiveCharacterTextSplitter(
+            separators=self.separators,
+            chunk_size=max_chunk_size,
+            chunk_overlap=int(max_chunk_size * 0.15),  # 15% overlap
+            length_function=len,
+            is_separator_regex=False,
+        )
+        
+        texts = splitter.split_text(text)
+        
+        chunks = []
+        char_position = 0
+        for i, text in enumerate(texts):
+            chunk_type = self._detect_chunk_type(text)
+            chunks.append(Chunk(
+                content=text,
+                position=i,
+                char_start=char_position,
+                char_end=char_position + len(text),
+                chunk_type=chunk_type,
+            ))
+            char_position += len(text)
+        
+        return chunks
+    
+    def _detect_chunk_type(self, text: str) -> str:
+        """Визначити тип chunk."""
+        if text.startswith("#"):
+            return "heading"
+        elif text.startswith("```"):
+            return "code"
+        elif "\n" not in text and len(text) < 200:
+            return "sentence"
+        else:
+            return "paragraph"
+```
+
+### Chunk Size Guidelines
+
+| Content Type | Chunk Size | Overlap | Reason |
+|--------------|------------|---------|---------|
+| Chat messages | 500-800 | 10% | Короткі, цілісні думки |
+| Documentation | 800-1200 | 15% | Structured, headings |
+| Code/logs | 600-1000 | 20% | Context важливий |
+| Long articles | 1000-1500 | 15% | Параграфи |
+
+---
+
+## Entity Extraction
+
+### OpenAI Structured Output
+
+```python
+from openai import AsyncOpenAI
+from pydantic import BaseModel
+
+class ExtractedEntity(BaseModel):
+    """Single entity."""
+    name: str
+    type: str  # PERSON, ORG, LOCATION, TECH, CONCEPT, etc.
+    confidence: float
+    context: str  # Surrounding text
+
+class EntityExtractionResult(BaseModel):
+    """Результат extraction."""
+    entities: list[ExtractedEntity]
+
+class EntityExtractor:
+    """Extract entities через OpenAI."""
+    
+    def __init__(self, api_key: str):
+        self.client = AsyncOpenAI(api_key=api_key)
+        self.model = "gpt-4o-mini"
+    
+    async def extract(self, text: str) -> list[ExtractedEntity]:
+        """
+        Extract named entities з тексту.
+        
+        Uses JSON mode для structured output.
+        """
+        prompt = f"""Extract all named entities from the following text.
+        
+Categories:
+- PERSON: People, characters
+- ORG: Organizations, companies, teams
+- LOCATION: Countries, cities, places
+- TECH: Technologies, programming languages, frameworks
+- CONCEPT: Abstract concepts, methodologies
+- EVENT: Events, conferences, meetings
+
+Text:
+{text}
+
+Return entities with:
+- name: exact text from input
+- type: category from above
+- confidence: 0.0-1.0 (how confident you are)
+- context: surrounding words for disambiguation
+"""
+        
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.0,  # Детерміністичний output
+        )
+        
+        result = EntityExtractionResult.model_validate_json(
+            response.choices[0].message.content
+        )
+        
+        return result.entities
+```
+
+### Entity Normalization
+
+```python
+def normalize_entity(name: str, type: str) -> str:
+    """
+    Нормалізувати entity name для групування.
+    
+    Examples:
+    - "Docker" vs "docker" → "docker"
+    - "Kubernetes" vs "K8s" → "kubernetes" (можна додати aliases)
+    - "Python 3.12" vs "Python" → "python"
+    """
+    canonical = name.lower().strip()
+    
+    # Type-specific normalization
+    if type == "TECH":
+        # Remove version numbers
+        canonical = re.sub(r'\s+\d+(\.\d+)*', '', canonical)
+        # Known aliases
+        aliases = {
+            "k8s": "kubernetes",
+            "js": "javascript",
+            "ts": "typescript",
+        }
+        canonical = aliases.get(canonical, canonical)
+    
+    return canonical
+```
+
+---
+
+## Similarity Search Algorithm
+
+### Step-by-Step
+
+```python
+class SimilaritySearcher:
+    """Find similar chunks/entities в temporal graph."""
+    
+    def __init__(self, repository: SubconsciousRepository):
+        self.repo = repository
+        self.threshold = 0.7  # Minimum similarity
+    
+    async def find_similar_chunks(
+        self,
+        query_embedding: list[float],
+        top_k: int = 10,
+        time_window_days: int | None = None,  # Temporal filter
+    ) -> list[SimilarChunk]:
+        """
+        Знайти найбільш схожі chunks.
+        
+        Args:
+            query_embedding: Vector для нового chunk
+            top_k: Скільки повернути
+            time_window_days: Якщо None - весь час, інакше останні N днів
+        """
+        # 1. Get all chunks (з temporal filter)
+        if time_window_days:
+            cutoff = datetime.now() - timedelta(days=time_window_days)
+            chunks = await self.repo.get_chunks_since(cutoff)
+        else:
+            chunks = await self.repo.get_all_chunks_with_embeddings()
+        
+        if not chunks:
+            return []
+        
+        # 2. Calculate cosine similarity (NumPy)
+        from sklearn.metrics.pairwise import cosine_similarity
+        
+        chunk_embeddings = np.array([c.embedding for c in chunks])
+        query_emb = np.array([query_embedding])
+        
+        similarities = cosine_similarity(query_emb, chunk_embeddings)[0]
+        
+        # 3. Filter by threshold
+        mask = similarities > self.threshold
+        filtered_indices = np.where(mask)[0]
+        filtered_similarities = similarities[mask]
+        
+        # 4. Sort and get top-K
+        top_indices = filtered_similarities.argsort()[-top_k:][::-1]
+        
+        results = []
+        for idx in top_indices:
+            chunk_idx = filtered_indices[idx]
+            results.append(SimilarChunk(
+                chunk=chunks[chunk_idx],
+                similarity=float(filtered_similarities[idx]),
+            ))
+        
+        return results
+    
+    async def find_similar_entities(
+        self,
+        entity_name: str,
+        entity_type: str,
+    ) -> list[Entity]:
+        """
+        Знайти схожі entities (по canonical_name + type).
+        """
+        canonical = normalize_entity(entity_name, entity_type)
+        
+        # Cypher query
+        cypher = """
+        MATCH (e:Entity)
+        WHERE e.type = $type
+          AND (e.canonical_name = $canonical 
+               OR e.name =~ $fuzzy_pattern)
+        RETURN e
+        ORDER BY e.mention_count DESC
+        LIMIT 10
+        """
+        
+        # Fuzzy matching pattern
+        fuzzy = f"(?i).*{re.escape(canonical)}.*"
+        
+        results = await self.repo.query(cypher, {
+            "type": entity_type,
+            "canonical": canonical,
+            "fuzzy_pattern": fuzzy,
+        })
+        
+        return [Entity(**r["e"]) for r in results]
+```
+
+---
+
+## Context Builder
+
+### Context Structure для Orchestrator
+
+```python
+class ContextAnalysis(BaseModel):
+    """Контекст що передається Orchestrator."""
+    
+    # 1. Recent temporal context
+    recent_messages: list[Message] = []  # Останні 10 messages (по timestamp)
+    
+    # 2. Semantic matches
+    similar_chunks: list[SimilarChunk] = []  # Top-10 схожих chunks
+    similar_messages: list[Message] = []     # Messages що містять ці chunks
+    
+    # 3. Entities
+    mentioned_entities: list[Entity] = []    # Entities з current message
+    related_entities: list[Entity] = []      # Схожі entities з історії
+    entity_context: dict[str, list[str]] = {} # Entity -> contexts де згадується
+    
+    # 4. Graph insights
+    topics: list[str] = []                   # Виявлені теми (з entities)
+    is_new_topic: bool = False               # Чи новий топік
+    conversation_continuity: float = 0.0     # 0.0-1.0 (наскільки пов'язано з минулим)
+    
+    # 5. Temporal insights
+    time_span_days: int = 0                  # Діапазон часу в контексті
+    oldest_relevant_message: datetime | None = None
+    
+    # 6. Metadata
+    total_chunks_analyzed: int = 0
+    total_entities_extracted: int = 0
+    processing_time_ms: float = 0.0
+    confidence: float = 0.0                  # Загальна впевненість
+
+
+class ContextFormatter:
+    """Формувати контекст для Orchestrator."""
+    
+    async def build_context(
+        self,
+        message: Message,
+        chunks: list[Chunk],
+        entities: list[Entity],
+        similar_chunks: list[SimilarChunk],
+    ) -> ContextAnalysis:
+        """
+        Побудувати повний контекст.
+        """
+        context = ContextAnalysis()
+        
+        # 1. Recent messages (temporal query)
+        context.recent_messages = await self._get_recent_messages(
+            reference_time=message.timestamp,
+            limit=10
+        )
+        
+        # 2. Semantic matches
+        context.similar_chunks = similar_chunks
+        context.similar_messages = await self._get_messages_for_chunks(
+            [sc.chunk for sc in similar_chunks]
+        )
+        
+        # 3. Entities
+        context.mentioned_entities = entities
+        context.related_entities = await self._find_related_entities(entities)
+        context.entity_context = await self._build_entity_contexts(entities)
+        
+        # 4. Topics
+        context.topics = self._extract_topics(entities)
+        context.is_new_topic = self._detect_new_topic(
+            context.topics,
+            context.recent_messages
+        )
+        
+        # 5. Continuity
+        context.conversation_continuity = self._calculate_continuity(
+            similar_chunks
+        )
+        
+        # 6. Temporal
+        if context.similar_messages:
+            oldest = min(m.timestamp for m in context.similar_messages)
+            context.oldest_relevant_message = oldest
+            context.time_span_days = (
+                message.timestamp - oldest
+            ).days
+        
+        # 7. Metadata
+        context.total_chunks_analyzed = len(chunks)
+        context.total_entities_extracted = len(entities)
+        context.confidence = self._calculate_confidence(
+            similar_chunks, entities
+        )
+        
+        return context
+    
+    async def _get_recent_messages(
+        self,
+        reference_time: datetime,
+        limit: int = 10
+    ) -> list[Message]:
+        """
+        Отримати recent messages БЕЗ session filter (temporal only).
+        """
+        cypher = """
+        MATCH (m:Message)
+        WHERE m.timestamp < $reference_time
+          AND m.valid_at <= $reference_time
+          AND (m.invalid_at IS NULL OR m.invalid_at > $reference_time)
+        RETURN m
+        ORDER BY m.timestamp DESC
+        LIMIT $limit
+        """
+        # ... implementation
+    
+    def _extract_topics(self, entities: list[Entity]) -> list[str]:
+        """
+        Витягти topics з entities.
+        
+        Strategy:
+        - Group entities by type
+        - Most mentioned entities = topics
+        - TECH entities особливо важливі
+        """
+        tech_entities = [e for e in entities if e.type == "TECH"]
+        concept_entities = [e for e in entities if e.type == "CONCEPT"]
+        
+        topics = []
+        topics.extend([e.canonical_name for e in tech_entities[:5]])
+        topics.extend([e.canonical_name for e in concept_entities[:3]])
+        
+        return topics
+    
+    def _calculate_continuity(
+        self,
+        similar_chunks: list[SimilarChunk]
+    ) -> float:
+        """
+        Розрахувати conversation continuity.
+        
+        High continuity = багато схожих chunks з високою similarity
+        Low continuity = нічого схожого (новий топік)
+        """
+        if not similar_chunks:
+            return 0.0
+        
+        # Average similarity з weight по top chunks
+        weights = [1.0, 0.8, 0.6, 0.4, 0.2]  # Top-5
+        weighted_sim = sum(
+            sc.similarity * weights[i]
+            for i, sc in enumerate(similar_chunks[:5])
+        ) / sum(weights[:len(similar_chunks)])
+        
+        return weighted_sim
+```
 
 ---
 
@@ -85,145 +729,551 @@ RETURN m1, m2, sim
 
 ```python
 async def subconscious_analyze_node(
-    state: dict, 
-    repository: MessageRepository,
-    analyzer: ContextAnalyzer
+    state: dict,
+    repository: SubconsciousRepository,
+    text_processor: SemanticTextSplitter,
+    embeddings_service: EmbeddingsService,
+    entity_extractor: EntityExtractor,
+    similarity_searcher: SimilaritySearcher,
+    context_formatter: ContextFormatter,
 ) -> dict:
-    """Analyze context and find relations."""
+    """
+    Підсвідомість node - повний pipeline.
     
-    logger.info("🧠 Підсвідомість: Аналізую контекст...")
+    Sequential execution (Orchestrator WAITS):
+    1. Get message від Clerk
+    2. Semantic chunking
+    3. Generate embeddings (batch)
+    4. Extract entities
+    5. Find similar chunks/entities
+    6. Build context
+    7. Update graph
+    8. Return enriched state
+    """
+    logger.info("🧠 Підсвідомість: Починаю аналіз...")
+    start_time = time.time()
     
     try:
-        # 1. Get message from Clerk
-        message_id = state["message_id"]
-        if not state["recorded"]:
+        # 0. Check if recorded
+        if not state.get("recorded"):
             logger.warning("⚠️ Message not recorded, skipping analysis")
             return state
         
-        # 2. Analyze
-        analysis = await analyzer.analyze_message(
-            message_id=message_id,
-            session_id=state["session_id"]
+        # 1. Get message
+        message_id = state["message_id"]
+        message = await repository.get_message(message_id)
+        
+        # 2. Semantic chunking
+        logger.info("📄 Chunking text...")
+        chunks = await text_processor.split(message.content)
+        logger.info(f"Created {len(chunks)} semantic chunks")
+        
+        # 3. Generate embeddings (BATCH)
+        logger.info("🔢 Generating embeddings...")
+        chunk_texts = [c.content for c in chunks]
+        embeddings = await embeddings_service.generate_batch(chunk_texts)
+        
+        for chunk, embedding in zip(chunks, embeddings):
+            chunk.embedding = embedding
+        
+        # 4. Extract entities
+        logger.info("🏷️ Extracting entities...")
+        entities = await entity_extractor.extract(message.content)
+        logger.info(f"Extracted {len(entities)} entities")
+        
+        # 5. Find similar chunks
+        logger.info("🔍 Searching for similar chunks...")
+        similar_results = []
+        for chunk in chunks:
+            similar = await similarity_searcher.find_similar_chunks(
+                chunk.embedding,
+                top_k=10
+            )
+            similar_results.extend(similar)
+        
+        # Deduplicate and sort
+        similar_results = sorted(
+            {sr.chunk.id: sr for sr in similar_results}.values(),
+            key=lambda x: x.similarity,
+            reverse=True
+        )[:10]
+        
+        logger.info(f"Found {len(similar_results)} similar chunks")
+        
+        # 6. Build context
+        logger.info("📋 Building context...")
+        context = await context_formatter.build_context(
+            message=message,
+            chunks=chunks,
+            entities=entities,
+            similar_chunks=similar_results,
         )
         
-        # 3. Update state
-        state["context"] = analysis.context
-        state["related_messages"] = analysis.related_message_ids
-        state["semantic_similarity"] = analysis.avg_similarity
+        # 7. Save to graph
+        logger.info("💾 Saving to graph...")
+        await repository.save_chunks(chunks, message_id)
+        await repository.save_entities(entities, message_id, chunks)
+        await repository.create_similarity_edges(similar_results)
+        
+        # 8. Update state
+        processing_time = (time.time() - start_time) * 1000
+        context.processing_time_ms = processing_time
+        
+        state["context"] = context.model_dump()
+        state["analyzed"] = True
+        state["error"] = None
         
         logger.info(
-            f"🧠 Підсвідомість: Знайдено {len(analysis.related_message_ids)} "
-            f"зв'язків (similarity={analysis.avg_similarity:.2f})"
+            f"🧠 Підсвідомість завершила аналіз: "
+            f"{len(chunks)} chunks, {len(entities)} entities, "
+            f"similarity={context.conversation_continuity:.2f}, "
+            f"time={processing_time:.0f}ms"
         )
         
     except Exception as e:
-        logger.error(f"🧠 Підсвідомість: Помилка аналізу: {e}")
-        # Graceful degradation - empty context
-        state["context"] = {}
-        state["related_messages"] = []
+        logger.error(f"🧠 Підсвідомість: Помилка аналізу: {e}", exc_info=True)
+        state["analyzed"] = False
+        state["error"] = f"Analysis failed: {str(e)}"
+        # Graceful degradation - пустий контекст
+        state["context"] = ContextAnalysis().model_dump()
     
     return state
 ```
 
 ---
 
-## Context Analysis Strategy
+## Performance Targets
 
-### 1. Recent History
+### Expected Timings (per message)
 
+| Operation | Time (avg) | Notes |
+|-----------|------------|-------|
+| Semantic chunking (1000 chars) | 10-20ms | Pure Python |
+| OpenAI embeddings (10 chunks, batch) | 150-250ms | Network I/O |
+| Entity extraction (1 request) | 200-400ms | OpenAI API |
+| Similarity search (1000 chunks) | 30-80ms | In-memory NumPy |
+| Graph writes (chunks + entities + edges) | 50-150ms | FalkorDB batch |
+| Context building | 20-50ms | Queries + formatting |
+| **TOTAL** | **460-950ms** | ~0.5-1s acceptable |
+
+### Scaling Considerations
+
+**До 10,000 chunks в БД:**
+- ✅ In-memory similarity працює (~100ms)
+
+**10,000-100,000 chunks:**
+- ⚠️ In-memory починає гальмувати (~500ms+)
+- 🔧 Рішення: Redis Stack VSS або Qdrant
+
+**100,000+ chunks:**
+- ❌ Обов'язково vector DB
+- ✅ Redis Stack VSS: <50ms
+- ✅ Qdrant: <30ms
+
+---
+
+## Error Handling Strategy
+
+### Three-Layer Approach
+
+**1. Service Layer → Specific Errors**
 ```python
-# Останні N повідомлень сесії
-cypher = """
-MATCH (m:Message)-[:IN_SESSION]->(s:ChatSession {id: $session_id})
-RETURN m.id, m.content, m.timestamp
-ORDER BY m.timestamp DESC
-LIMIT $limit
-"""
+class EmbeddingError(Exception):
+    """OpenAI embedding failed."""
+
+class EntityExtractionError(Exception):
+    """Entity extraction failed."""
+
+class SimilaritySearchError(Exception):
+    """Similarity search failed."""
 ```
 
-### 2. Semantic Similarity
+**2. Node Layer → Graceful Degradation**
+```python
+try:
+    context = await build_full_context(...)
+except EmbeddingError:
+    # Fallback: контекст без semantic search
+    context = await build_basic_context(recent_only=True)
+except EntityExtractionError:
+    # Fallback: контекст без entities
+    context = await build_context_without_entities(...)
+```
+
+**3. API Layer → HTTP Responses**
+```python
+# Якщо state["analyzed"] = False
+if not final_state.analyzed:
+    logger.warning("Subconscious analysis failed, using degraded context")
+    # Orchestrator отримує базовий контекст але працює далі
+```
+
+**НІКОЛИ не failувати весь request через Subconscious!**
+
+---
+
+## Configuration
 
 ```python
-# Знайти схожі по embedding
-similar_messages = await find_similar_by_embedding(
-    current_embedding,
-    threshold=0.7,
-    limit=10
+# core/config.py
+
+class Settings(BaseSettings):
+    # ... existing ...
+    
+    # OpenAI Settings
+    openai_api_key: str = os.getenv("OPENAI_API_KEY")
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_embedding_dimensions: int = 1536
+    openai_entity_model: str = "gpt-4o-mini"
+    
+    # Subconscious Settings
+    subconscious_chunk_size: int = 800
+    subconscious_chunk_overlap: float = 0.15  # 15%
+    subconscious_similarity_threshold: float = 0.7
+    subconscious_max_similar_chunks: int = 10
+    subconscious_recent_messages_limit: int = 10
+    
+    # Temporal settings
+    subconscious_default_time_window_days: int | None = None  # None = безмежно
+    
+    # Performance
+    subconscious_batch_size: int = 100  # Max chunks per batch
+    subconscious_timeout: int = 30  # seconds
+```
+
+---
+
+## Testing Strategy
+
+### Unit Tests
+
+```python
+@pytest.mark.asyncio
+async def test_semantic_chunking():
+    """Test semantic text splitting."""
+    processor = SemanticTextSplitter()
+    
+    text = "# Heading\n\nParagraph 1.\n\nParagraph 2.\n\nCode:\n```python\ncode\n```"
+    chunks = await processor.split(text)
+    
+    assert len(chunks) == 3
+    assert chunks[0].chunk_type == "heading"
+    assert chunks[1].chunk_type == "paragraph"
+    assert chunks[2].chunk_type == "code"
+
+@pytest.mark.asyncio
+async def test_entity_extraction(mock_openai):
+    """Test entity extraction."""
+    extractor = EntityExtractor(api_key="test")
+    
+    text = "Docker та Kubernetes використовують в Google."
+    entities = await extractor.extract(text)
+    
+    assert len(entities) >= 3
+    assert any(e.name == "Docker" and e.type == "TECH" for e in entities)
+    assert any(e.name == "Google" and e.type == "ORG" for e in entities)
+
+@pytest.mark.asyncio
+async def test_similarity_search():
+    """Test finding similar chunks."""
+    searcher = SimilaritySearcher(mock_repository)
+    
+    query_embedding = [0.1] * 1536
+    results = await searcher.find_similar_chunks(query_embedding, top_k=5)
+    
+    assert len(results) <= 5
+    assert all(r.similarity >= 0.7 for r in results)
+    assert results[0].similarity >= results[-1].similarity  # Sorted
+```
+
+### Integration Tests
+
+```python
+@pytest.mark.asyncio
+async def test_full_subconscious_pipeline(test_db):
+    """Test повний pipeline Підсвідомості."""
+    # Setup
+    message = await create_test_message("Розкажи про Docker та Kubernetes")
+    
+    state = {
+        "message_id": message.id,
+        "recorded": True,
+    }
+    
+    # Execute
+    result = await subconscious_analyze_node(state, ...)
+    
+    # Assert
+    assert result["analyzed"] is True
+    assert "context" in result
+    
+    context = ContextAnalysis(**result["context"])
+    assert len(context.similar_chunks) > 0
+    assert len(context.mentioned_entities) >= 2
+    assert "docker" in [e.canonical_name for e in context.mentioned_entities]
+```
+
+---
+
+## Monitoring & Observability
+
+### Key Metrics
+
+```python
+# Prometheus metrics (приклад)
+subconscious_processing_time = Histogram(
+    "subconscious_processing_seconds",
+    "Time to process message through subconscious",
+    buckets=[0.1, 0.25, 0.5, 0.75, 1.0, 2.0]
+)
+
+subconscious_chunks_created = Counter(
+    "subconscious_chunks_total",
+    "Total chunks created"
+)
+
+subconscious_entities_extracted = Counter(
+    "subconscious_entities_total",
+    "Total entities extracted"
+)
+
+subconscious_similarity_score = Histogram(
+    "subconscious_similarity_score",
+    "Distribution of similarity scores",
+    buckets=[0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0]
 )
 ```
 
-### 3. Relationship Creation
+### Logging Strategy
 
 ```python
-# Створити зв'язки в графі
-cypher = """
-MATCH (m1:Message {id: $message_id})
-MATCH (m2:Message {id: $related_id})
-CREATE (m1)-[:REFERENCES {similarity: $similarity}]->(m2)
-"""
+logger.info(
+    f"🧠 Підсвідомість: Processed message "
+    f"(chunks={len(chunks)}, "
+    f"entities={len(entities)}, "
+    f"similarity_avg={avg_similarity:.2f}, "
+    f"continuity={context.conversation_continuity:.2f}, "
+    f"time={processing_time:.0f}ms)"
+)
+```
+
+---
+
+## Integration with LangGraph
+
+### Workflow Update
+
+```python
+# backend/app/agents/graph.py
+
+def create_chat_workflow(
+    clerk_repo: MessageRepository,
+    subconscious_repo: SubconsciousRepository,
+    # ... all subconscious dependencies
+) -> StateGraph:
+    """
+    Create multi-agent workflow with Subconscious.
+    
+    Flow:
+    Entry → Clerk → Subconscious → Orchestrator → END
+    """
+    workflow = StateGraph(ChatState)
+    
+    # Clerk node
+    async def clerk_node_wrapper(state: ChatState) -> ChatState:
+        # ... existing ...
+    
+    # Subconscious node (NEW)
+    async def subconscious_node_wrapper(state: ChatState) -> ChatState:
+        """Wrapper з dependency injection."""
+        state_dict = state.model_dump()
+        
+        # Check if should analyze
+        if not state_dict.get("recorded"):
+            return state
+        
+        # Run analysis
+        updated_state = await subconscious_analyze_node(
+            state_dict,
+            repository=subconscious_repo,
+            text_processor=text_processor,
+            embeddings_service=embeddings_service,
+            entity_extractor=entity_extractor,
+            similarity_searcher=similarity_searcher,
+            context_formatter=context_formatter,
+        )
+        
+        return ChatState(**updated_state)
+    
+    # Add nodes
+    workflow.add_node("clerk", clerk_node_wrapper)
+    workflow.add_node("subconscious", subconscious_node_wrapper)
+    
+    # Define flow
+    workflow.set_entry_point("clerk")
+    workflow.add_edge("clerk", "subconscious")
+    workflow.add_edge("subconscious", END)  # Orchestrator в Phase 3
+    
+    return workflow.compile()
 ```
 
 ---
 
 ## State Contract
 
-### Subconscious Provides
+### Subconscious Expects (від Clerk):
 
 ```python
-state["context"] = {
-    "recent_messages": [...],      # Останні 5-10 messages
-    "similar_messages": [...],     # Схожі по темі
-    "topics": ["history", "war"],  # Виявлені теми
-    "entities": ["Kozak", "Sich"], # Named entities
+state = {
+    "message_id": str,        # Required
+    "recorded": bool,         # Required (must be True)
+    "message_content": str,   # Optional (can re-fetch)
+    "message_role": str,      # Optional
 }
-
-state["related_messages"] = ["msg1", "msg2"]  # IDs
-state["semantic_similarity"] = 0.82  # Average
 ```
 
-### Orchestrator Will Use
+### Subconscious Provides (для Orchestrator):
 
 ```python
-context = state["context"]
-recent = context["recent_messages"]
-topics = context["topics"]
-
-# Build prompt for Gemini with context
-prompt = f"User asked: {user_msg}\nContext: {recent}\nTopics: {topics}"
+state = {
+    # ... existing from Clerk ...
+    
+    # NEW from Subconscious
+    "analyzed": bool,
+    "context": {
+        "recent_messages": [...],
+        "similar_chunks": [...],
+        "mentioned_entities": [...],
+        "topics": [...],
+        "conversation_continuity": float,
+        # ... full ContextAnalysis
+    },
+    "error": str | None,
+}
 ```
 
 ---
 
-## Performance Targets
+## Migration from Phase 1
 
-**Analysis time:** < 500ms  
-**Embedding generation:** ~100-200ms  
-**Similarity search:** ~50-100ms  
-**Graph traversal:** ~50-100ms
+### Existing Messages
 
-**Total:** ~300-500ms per message
+Коли запустимо Phase 2, в БД вже будуть messages з Phase 1 (без chunks/entities).
+
+**Strategy:**
+
+1. **Lazy analysis:** Аналізувати тільки нові messages
+2. **Background job (опціонально):** Проаналізувати старі messages в фоні
+3. **Query fallback:** Якщо немає chunks для старого message, використати raw content
+
+```python
+async def get_context_for_message(message_id: str):
+    """Get context враховуючи legacy messages."""
+    
+    # Try to get processed chunks
+    chunks = await repo.get_chunks_for_message(message_id)
+    
+    if chunks:
+        # Phase 2 message - use chunks
+        return await build_context_from_chunks(chunks)
+    else:
+        # Phase 1 message - fallback to raw content
+        message = await repo.get_message(message_id)
+        return await build_basic_context(message.content)
+```
 
 ---
 
-## Future Enhancements
+## Future Enhancements (Phase 2.5+)
 
-### Phase 2.1: Basic Context
-- Recent messages (last 10)
-- Simple keyword matching
+### 1. Entity Resolution & Merging
 
-### Phase 2.2: Semantic Search
-- Embedding generation
-- Vector similarity
-- Cosine distance
+```cypher
+// Merge duplicate entities
+MATCH (e1:Entity {canonical_name: "docker"}),
+      (e2:Entity {canonical_name: "docker"})
+WHERE e1.id < e2.id
+// Merge relationships and properties
+// Delete e2
+```
 
-### Phase 2.3: Graph Analysis
-- FOLLOWS relationships
-- Topic clustering
-- Entity extraction
+### 2. Topic Clustering
+
+```python
+# K-means clustering на entity embeddings
+from sklearn.cluster import KMeans
+
+entity_vectors = [e.embedding for e in entities]
+kmeans = KMeans(n_clusters=5)
+clusters = kmeans.fit_predict(entity_vectors)
+
+# Clusters = topics
+```
+
+### 3. Temporal Decay
+
+```python
+# Старі chunks менш релевантні
+def apply_temporal_decay(similarity: float, age_days: int) -> float:
+    """Знизити similarity для старих chunks."""
+    decay_factor = 0.95 ** (age_days / 30)  # -5% кожні 30 днів
+    return similarity * decay_factor
+```
+
+### 4. Cross-User Knowledge (якщо багато users)
+
+```cypher
+// Entities shared across users
+MATCH (e:Entity)<-[:MENTIONS]-(m:Message)
+WITH e, count(DISTINCT m.user_id) as user_count
+WHERE user_count > 10
+RETURN e.name, e.type, user_count
+ORDER BY user_count DESC
+```
 
 ---
 
-**Version:** 0.1.0 (Planning)  
-**Status:** NOT IMPLEMENTED  
-**Blocked by:** Phase 1 completion  
-**Target:** Phase 2
+## Quick Reference Checklist
+
+**When implementing Subconscious:**
+- [ ] Use semantic chunking (RecursiveCharacterTextSplitter)
+- [ ] Batch embeddings (OpenAI API efficient usage)
+- [ ] Extract entities через structured output (JSON mode)
+- [ ] Store temporal timestamps (valid_at, invalid_at)
+- [ ] NO session filtering - temporal queries only
+- [ ] Cosine similarity threshold = 0.7
+- [ ] Graceful degradation на помилках
+- [ ] Log with "🧠 Підсвідомість:" prefix
+- [ ] Return dict з ChatState structure
+- [ ] Orchestrator WAITS - synchronous pipeline
+
+**When debugging Subconscious:**
+- [ ] Check OpenAI API keys configured
+- [ ] Check FalkorDB vector storage strategy
+- [ ] Verify chunk sizes reasonable (<1500 chars)
+- [ ] Check similarity threshold not too high
+- [ ] Verify temporal queries work (no session filter)
+- [ ] Check logs for "🧠 Підсвідомість"
+- [ ] Inspect state["context"] structure
+- [ ] Monitor processing time (<1s expected)
+
+---
+
+## Comparison: Sessions vs Temporal
+
+| Aspect | Session-Based (Wrong) | Temporal (Correct) |
+|--------|----------------------|-------------------|
+| **Memory scope** | Limited to session | Безмежна |
+| **Що пам'ятаємо** | Тільки current session | Весь час |
+| **Query example** | `WHERE session_id = $id` | `WHERE timestamp < $time` |
+| **Переваги** | Простіше | Реалістичніше |
+| **User experience** | "Почни нову сесію" | "Пам'ятаєш 3 місяці тому?.." |
+| **Як в Graphiti** | ❌ Ні | ✅ Так |
+
+---
+
+**Version:** 2.0.0  
+**Created:** November 10, 2025  
+**Status:** Архітектура завершена, готова до імплементації  
+**Dependencies:** OpenAI API, FalkorDB, Phase 1 (Clerk)  
+**Next:** Phase 3 (Orchestrator Agent)
