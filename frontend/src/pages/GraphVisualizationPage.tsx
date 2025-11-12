@@ -141,57 +141,104 @@ export default function GraphVisualizationPage() {
             }}
           >
             {activeView === 'browser' ? (
-              <div className="h-full flex flex-col items-center justify-center p-12 text-center">
-                <div 
-                  className="w-24 h-24 rounded-full flex items-center justify-center mb-6 border-4"
-                  style={{ 
-                    backgroundColor: COLORS.gold,
-                    borderColor: COLORS.blue,
-                  }}
-                >
-                  <Network className="w-12 h-12" style={{ color: COLORS.blue }} />
+              <div className="h-full overflow-y-auto p-12">
+                <div className="max-w-2xl mx-auto space-y-6">
+                  {/* Header */}
+                  <div className="text-center">
+                    <div 
+                      className="w-24 h-24 rounded-full flex items-center justify-center mb-6 border-4 mx-auto"
+                      style={{ 
+                        backgroundColor: COLORS.gold,
+                        borderColor: COLORS.blue,
+                      }}
+                    >
+                      <Network className="w-12 h-12" style={{ color: COLORS.blue }} />
+                    </div>
+                    
+                    <h3 
+                      className="text-2xl font-bold mb-4"
+                      style={{ color: COLORS.darkBrown }}
+                    >
+                      FalkorDB Browser
+                    </h3>
+                    
+                    <p 
+                      className="text-base mb-6"
+                      style={{ color: COLORS.darkBrown, opacity: 0.7 }}
+                    >
+                      Візуалізація вузлів і зв'язків графа
+                    </p>
+                  </div>
+
+                  {/* Instructions */}
+                  <div 
+                    className="rounded-xl p-6 border-2"
+                    style={{
+                      backgroundColor: 'white',
+                      borderColor: COLORS.blue,
+                    }}
+                  >
+                    <h4 
+                      className="text-lg font-bold mb-4 flex items-center gap-2"
+                      style={{ color: COLORS.blue }}
+                    >
+                      <Sparkles className="w-5 h-5" />
+                      Інструкція підключення
+                    </h4>
+                    
+                    <ol className="space-y-3 text-sm" style={{ color: COLORS.darkBrown }}>
+                      <li className="flex gap-2">
+                        <span className="font-bold">1.</span>
+                        <span>Натисніть кнопку "Відкрити Browser" нижче</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-bold">2.</span>
+                        <span>На сторінці логіну залиште всі поля як є (host: localhost, port: 6379)</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-bold">3.</span>
+                        <span><strong>Очистіть поля Username і Password</strong> (залиште їх порожніми)</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-bold">4.</span>
+                        <span>Натисніть "Log in"</span>
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="font-bold">5.</span>
+                        <span>Виберіть граф: <strong style={{ color: COLORS.blue }}>{selectedGraph}</strong></span>
+                      </li>
+                    </ol>
+                  </div>
+
+                  {/* Open Button */}
+                  <div className="text-center">
+                    <button
+                      onClick={() => window.open('http://localhost:3001', '_blank', 'noopener,noreferrer')}
+                      className="px-8 py-4 rounded-xl font-bold text-lg border-3 transition-all hover:scale-105"
+                      style={{
+                        backgroundColor: COLORS.blue,
+                        color: 'white',
+                        border: `3px solid ${COLORS.gold}`,
+                      }}
+                    >
+                      🔍 Відкрити Browser
+                    </button>
+                  </div>
+
+                  {/* Technical Info */}
+                  <div 
+                    className="rounded-xl p-4 border"
+                    style={{
+                      backgroundColor: COLORS.gold,
+                      borderColor: COLORS.blue,
+                      opacity: 0.9,
+                    }}
+                  >
+                    <p className="text-xs text-center" style={{ color: COLORS.blue }}>
+                      📍 Connection: localhost:6379 | 👤 User: default (no password) | 📊 Graph: {selectedGraph}
+                    </p>
+                  </div>
                 </div>
-                
-                <h3 
-                  className="text-2xl font-bold mb-4"
-                  style={{ color: COLORS.darkBrown }}
-                >
-                  FalkorDB Browser
-                </h3>
-                
-                <p 
-                  className="text-base mb-6 max-w-md"
-                  style={{ color: COLORS.darkBrown, opacity: 0.7 }}
-                >
-                  CSP політика блокує вбудування браузера через iframe. 
-                  Відкрийте FalkorDB Browser в окремому вікні для візуалізації графів.
-                </p>
-                
-                <button
-                  onClick={() => window.open(getBrowserUrl(), '_blank', 'noopener,noreferrer')}
-                  className="px-8 py-4 rounded-xl font-bold text-lg border-3 transition-all hover:scale-105"
-                  style={{
-                    backgroundColor: COLORS.blue,
-                    color: 'white',
-                    border: `3px solid ${COLORS.gold}`,
-                  }}
-                >
-                  🔍 Відкрити FalkorDB Browser
-                </button>
-                
-                <p 
-                  className="mt-4 text-sm"
-                  style={{ color: COLORS.darkBrown, opacity: 0.6 }}
-                >
-                  💡 Браузер відкриється з вже вибраним графом: <strong>{selectedGraph}</strong>
-                </p>
-                
-                <p 
-                  className="mt-6 text-sm"
-                  style={{ color: COLORS.darkBrown, opacity: 0.6 }}
-                >
-                  📍 Підключення: localhost:6379
-                </p>
               </div>
             ) : (
               <GraphStats graphName={selectedGraph} />

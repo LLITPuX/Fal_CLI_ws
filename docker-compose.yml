@@ -76,7 +76,7 @@ services:
     ports:
       - "3001:3000"
     environment:
-      - FALKORDB_URL=redis://falkordb:6379
+      - REDIS_URL=redis://Default:Default@falkordb:6379
     networks:
       - gemini-network
     depends_on:
