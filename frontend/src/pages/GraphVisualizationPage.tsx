@@ -193,19 +193,15 @@ export default function GraphVisualizationPage() {
                       </li>
                       <li className="flex gap-2">
                         <span className="font-bold">2.</span>
-                        <span>На сторінці логіну залиште всі поля як є (host: localhost, port: 6379)</span>
+                        <span>Браузер відкриється і <strong>автоматично підключиться</strong> до бази</span>
                       </li>
                       <li className="flex gap-2">
                         <span className="font-bold">3.</span>
-                        <span><strong>Очистіть поля Username і Password</strong> (залиште їх порожніми)</span>
+                        <span>Виберіть граф зі списку: <strong style={{ color: COLORS.blue }}>{selectedGraph}</strong></span>
                       </li>
                       <li className="flex gap-2">
                         <span className="font-bold">4.</span>
-                        <span>Натисніть "Log in"</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="font-bold">5.</span>
-                        <span>Виберіть граф: <strong style={{ color: COLORS.blue }}>{selectedGraph}</strong></span>
+                        <span>Почніть досліджувати вузли та зв'язки!</span>
                       </li>
                     </ol>
                   </div>
@@ -235,7 +231,7 @@ export default function GraphVisualizationPage() {
                     }}
                   >
                     <p className="text-xs text-center" style={{ color: COLORS.blue }}>
-                      📍 Connection: localhost:6379 | 👤 User: default (no password) | 📊 Graph: {selectedGraph}
+                      📍 Підключення: localhost:6379 | 🔐 Автоматична аутентифікація | 📊 Граф: {selectedGraph}
                     </p>
                   </div>
                 </div>
