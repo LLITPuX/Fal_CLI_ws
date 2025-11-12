@@ -40,8 +40,15 @@ export default function GraphVisualizationPage() {
   const [activeView, setActiveView] = useState<ActiveView>('browser');
   const [selectedGraph, setSelectedGraph] = useState<string>('gemini_graph');
 
-  // FalkorDB Browser URL (через docker на порту 3001)
-  const browserUrl = 'http://localhost:3001';
+  // FalkorDB Browser URL з автоматичним підключенням
+  const getBrowserUrl = () => {
+    const params = new URLSearchParams({
+      host: 'localhost',
+      port: '6379',
+      graph: selectedGraph,
+    });
+    return `http://localhost:3001/?${params.toString()}`;
+  };
 
   return (
     <div 
@@ -161,7 +168,7 @@ export default function GraphVisualizationPage() {
                 </p>
                 
                 <button
-                  onClick={() => window.open(browserUrl, '_blank', 'noopener,noreferrer')}
+                  onClick={() => window.open(getBrowserUrl(), '_blank', 'noopener,noreferrer')}
                   className="px-8 py-4 rounded-xl font-bold text-lg border-3 transition-all hover:scale-105"
                   style={{
                     backgroundColor: COLORS.blue,
@@ -171,6 +178,13 @@ export default function GraphVisualizationPage() {
                 >
                   🔍 Відкрити FalkorDB Browser
                 </button>
+                
+                <p 
+                  className="mt-4 text-sm"
+                  style={{ color: COLORS.darkBrown, opacity: 0.6 }}
+                >
+                  💡 Браузер відкриється з вже вибраним графом: <strong>{selectedGraph}</strong>
+                </p>
                 
                 <p 
                   className="mt-6 text-sm"
