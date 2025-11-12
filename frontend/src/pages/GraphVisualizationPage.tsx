@@ -40,15 +40,8 @@ export default function GraphVisualizationPage() {
   const [activeView, setActiveView] = useState<ActiveView>('browser');
   const [selectedGraph, setSelectedGraph] = useState<string>('gemini_graph');
 
-  // FalkorDB Browser URL з автоматичним підключенням
-  const getBrowserUrl = () => {
-    const params = new URLSearchParams({
-      host: 'localhost',
-      port: '6379',
-      graph: selectedGraph,
-    });
-    return `http://localhost:3001/?${params.toString()}`;
-  };
+  // FalkorDB Browser URL - автоматичне підключення через REDIS_URL в docker-compose
+  const browserUrl = 'http://localhost:3001';
 
   return (
     <div 
@@ -209,7 +202,7 @@ export default function GraphVisualizationPage() {
                   {/* Open Button */}
                   <div className="text-center">
                     <button
-                      onClick={() => window.open('http://localhost:3001', '_blank', 'noopener,noreferrer')}
+                      onClick={() => window.open(browserUrl, '_blank', 'noopener,noreferrer')}
                       className="px-8 py-4 rounded-xl font-bold text-lg border-3 transition-all hover:scale-105"
                       style={{
                         backgroundColor: COLORS.blue,
