@@ -1,0 +1,876 @@
+---
+description: Cursor Agent (Курсор) - Development memory and architectural decisions tracker
+alwaysApply: false
+---
+# CURSOR AGENT (КУРСОР) RULES
+
+## Purpose
+
+Cursor Agent - агент розробки, який автоматично записує кожну взаємодію developer↔AI у граф `cursor_memory`. На відміну від Chat Agents (які обслуговують user chat), Cursor фокусується на development sessions, архітектурних рішеннях, code patterns та багах.
+
+**Метафора:** Cursor - це досвідчений scribe (писар) який документує не просто розмови, а історію розвитку проекту, щоб майбутні розробники могли навчитися на попередніх рішеннях.
+
+---
+
+## Responsibility (Single Responsibility)
+
+### ✅ ТІЛЬКИ ЦЕ:
+
+1. **Записувати кожен UserQuery** (text, timestamp, mode, intent)
+2. **Записувати кожен AssistantResponse** (text, tools_used, files_modified, success)
+3. **Групувати по DevelopmentSession** (start/end time, git context)
+4. **Зберігати в окремий граф** `cursor_memory` (ізольовано від chat)
+
+### ❌ ЗАБОРОНЕНО:
+
+- ❌ Аналізувати код (це завдання майбутнього Analyzer Agent)
+- ❌ Приймати рішення (тільки записуємо)
+- ❌ Модифікувати content
+- ❌ Генерувати відповіді користувачу
+- ❌ Писати в інші графи (тільки `cursor_memory`)
+
+---
+
+## Graph Schema (`cursor_memory`)
+
+### Node Types
+
+```cypher
+// Development Session
+(:DevelopmentSession {
+  id: "uuid",
+  started_at: "ISO8601",
+  ended_at: "ISO8601|NULL",      // NULL поки session активна
+  total_queries: int,             // Лічильник запитів
+  total_responses: int,           // Лічильник відповідей
+  mode: "agent|ask",              // Cursor mode
+  git_branch: "string|NULL",      // Git branch якщо є
+  git_commit: "string|NULL",      // Last commit hash
+  project_path: "string",         // Workspace path
+  status: "active|completed|interrupted"
+})
+
+// User Query
+(:UserQuery {
+  id: "uuid",
+  content: "текст запиту",
+  timestamp: "ISO8601",
+  session_id: "uuid",
+  mode: "agent|ask",
+  intent: "string|NULL",          // "bug_fix", "feature", "question", "refactor", "docs"
+  
+  // Metadata
+  content_length: int,
+  has_code: bool,                 // Чи містить code blocks
+  mentioned_files: ["path1", "path2"]  // Files згадані в запиті
+})
+
+// Assistant Response
+(:AssistantResponse {
+  id: "uuid",
+  content: "текст відповіді",
+  timestamp: "ISO8601",
+  query_id: "uuid",
+  
+  // Tools & Actions
+  tools_used: ["read_file", "codebase_search", "grep"],
+  files_modified: ["backend/app/main.py"],
+  files_created: ["new_file.py"],
+  files_deleted: ["old_file.py"],
+  
+  // Outcome
+  success: bool,                  // Чи допомогло користувачу
+  execution_time_ms: float,
+  
+  // Metadata
+  content_length: int,
+  has_code_examples: bool,
+  error_occurred: bool
+})
+
+// Architectural Decision (Future - Phase 2)
+(:ArchitecturalDecision {
+  id: "uuid",
+  title: "Switch to async-first",
+  description: "All I/O operations async",
+  rationale: "Better performance, non-blocking",
+  alternatives: ["sync with threads", "celery workers"],
+  decided_at: "ISO8601",
+  decided_by: "user|ai|collaborative",
+  status: "proposed|accepted|implemented|deprecated"
+})
+
+// Code Pattern (Future - Phase 2)
+(:CodePattern {
+  id: "uuid",
+  pattern_type: "async|repository|agent_node|error_handling",
+  name: "Repository Pattern",
+  example_code: "class Repository:\n    async def create()...",
+  when_to_use: "For database operations",
+  anti_patterns: ["Direct DB calls in routes"],
+  language: "python",
+  framework: "fastapi"
+})
+
+// Component (Future - Phase 2)
+(:Component {
+  id: "uuid",
+  name: "Clerk Agent",
+  type: "agent|service|api|database|frontend",
+  path: "backend/app/agents/clerk",
+  purpose: "Record messages without processing",
+  dependencies: ["FalkorDB", "LangGraph"],
+  status: "active|deprecated|planned"
+})
+
+// Technology (Future - Phase 2)
+(:Technology {
+  id: "uuid",
+  name: "FalkorDB",
+  type: "database",
+  version: "latest",
+  config: "docker-compose.yml",
+  lessons_learned: ["datetime() not supported", "metadata as string"],
+  first_used: "ISO8601",
+  last_mentioned: "ISO8601"
+})
+
+// Bug (Future - Phase 2)
+(:Bug {
+  id: "uuid",
+  title: "FalkorDB datetime() fails",
+  description: "Unknown function error",
+  root_cause: "FalkorDB doesn't support datetime() in Cypher",
+  solution: "Store as ISO string",
+  discovered_at: "ISO8601",
+  fixed_at: "ISO8601|NULL",
+  severity: "critical|high|medium|low",
+  prevent_future: "Always use ISO strings for timestamps"
+})
+```
+
+### Relationships
+
+```cypher
+// Session → Query → Response (основний flow)
+(:UserQuery)-[:IN_SESSION]->(:DevelopmentSession)
+(:AssistantResponse)-[:ANSWERS]->(:UserQuery)
+
+// Query sequences (послідовність питань)
+(:UserQuery)-[:FOLLOWED_BY {time_delta_seconds: int}]->(:UserQuery)
+
+// Semantic similarity (майбутнє - Phase 2)
+(:UserQuery)-[:SIMILAR_TO {
+  similarity: float,
+  algorithm: "cosine"
+}]->(:UserQuery)
+
+// Decisions from queries (Phase 2)
+(:UserQuery)-[:LEADS_TO]->(:ArchitecturalDecision)
+(:ArchitecturalDecision)-[:AFFECTS]->(:Component)
+
+// Components and Technologies (Phase 2)
+(:Component)-[:USES]->(:Technology)
+(:Component)-[:IMPLEMENTS]->(:CodePattern)
+
+// Bugs (Phase 2)
+(:Bug)-[:FOUND_IN]->(:Component)
+(:Bug)-[:DISCOVERED_BY]->(:UserQuery)
+(:Bug)-[:FIXED_BY]->(:ArchitecturalDecision)
+```
+
+---
+
+## Phase 1 Implementation
+
+### What to Store (Minimum Viable)
+
+**Phase 1 focuses on:**
+1. ✅ DevelopmentSession (start/end tracking)
+2. ✅ UserQuery (every request with metadata)
+3. ✅ AssistantResponse (every response with tools + files)
+4. ✅ Basic relationships (IN_SESSION, ANSWERS, FOLLOWED_BY)
+
+**NOT in Phase 1:**
+- ❌ ArchitecturalDecision (manual extraction needed)
+- ❌ CodePattern (pattern recognition complex)
+- ❌ Component/Technology (requires code analysis)
+- ❌ Bug tracking (needs categorization logic)
+- ❌ Semantic similarity (needs embeddings)
+
+**Reason:** Start simple, add intelligence later.
+
+### Auto-Save Strategy
+
+**Trigger:** After EVERY request/response cycle
+
+```python
+# Pseudo-code flow
+1. User sends request → Cursor receives
+2. Cursor processes request → generates response
+3. ✅ BEFORE sending response to user:
+   - Call cursor_record_node()
+   - Save UserQuery + AssistantResponse
+   - Link to active DevelopmentSession
+4. Send response to user
+
+# Graceful failure:
+- If recording fails → log error, but DON'T fail main request
+- User must receive response даже if Cursor Agent down
+```
+
+### Session Management
+
+**Session Start:**
+- Trigger: First request in Cursor after >30 min idle
+- OR explicit `/api/cursor/session/start`
+- Create `:DevelopmentSession` with status="active"
+
+**Session Active:**
+- Every request increments `total_queries`
+- Every response increments `total_responses`
+- Track last_activity timestamp
+
+**Session End:**
+- Trigger: Explicit `/api/cursor/session/end`
+- OR автоматично після 30+ min idle
+- SET `ended_at`, `status="completed"`
+- Trigger backup (export to JSON + git commit)
+
+---
+
+## Repository Pattern
+
+### Core Methods (Phase 1)
+
+```python
+class CursorRepository:
+    """Repository for cursor_memory graph operations."""
+    
+    def __init__(self, client: FalkorDBClient):
+        self.client = client
+        self.graph = client.select_graph("cursor_memory")
+    
+    async def create_session(
+        self,
+        mode: str,
+        git_branch: str | None = None,
+        git_commit: str | None = None,
+        project_path: str = ""
+    ) -> str:
+        """Create new development session."""
+        session_id = str(uuid.uuid4())
+        cypher = """
+        CREATE (s:DevelopmentSession {
+          id: $id,
+          started_at: $started_at,
+          ended_at: NULL,
+          total_queries: 0,
+          total_responses: 0,
+          mode: $mode,
+          git_branch: $git_branch,
+          git_commit: $git_commit,
+          project_path: $project_path,
+          status: 'active'
+        })
+        RETURN s.id as id
+        """
+        
+        params = {
+            "id": session_id,
+            "started_at": datetime.now().isoformat(),
+            "mode": mode,
+            "git_branch": git_branch,
+            "git_commit": git_commit,
+            "project_path": project_path,
+        }
+        
+        await self.graph.query(cypher, params)
+        logger.info(f"📝 Cursor: Session created {session_id}")
+        return session_id
+    
+    async def create_user_query(
+        self,
+        content: str,
+        session_id: str,
+        mode: str,
+        intent: str | None = None,
+        mentioned_files: list[str] = []
+    ) -> str:
+        """Record user query."""
+        query_id = str(uuid.uuid4())
+        cypher = """
+        MATCH (s:DevelopmentSession {id: $session_id})
+        CREATE (q:UserQuery {
+          id: $id,
+          content: $content,
+          timestamp: $timestamp,
+          session_id: $session_id,
+          mode: $mode,
+          intent: $intent,
+          content_length: $content_length,
+          has_code: $has_code,
+          mentioned_files: $mentioned_files
+        })
+        CREATE (q)-[:IN_SESSION]->(s)
+        SET s.total_queries = s.total_queries + 1
+        RETURN q.id as id
+        """
+        
+        params = {
+            "id": query_id,
+            "content": content,
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "mode": mode,
+            "intent": intent,
+            "content_length": len(content),
+            "has_code": "```" in content,
+            "mentioned_files": str(mentioned_files),  # FalkorDB doesn't like arrays
+        }
+        
+        await self.graph.query(cypher, params)
+        logger.info(f"📝 Cursor: Query recorded {query_id}")
+        return query_id
+    
+    async def create_assistant_response(
+        self,
+        content: str,
+        query_id: str,
+        tools_used: list[str],
+        files_modified: list[str],
+        success: bool = True,
+        execution_time_ms: float = 0.0
+    ) -> str:
+        """Record assistant response."""
+        response_id = str(uuid.uuid4())
+        cypher = """
+        MATCH (q:UserQuery {id: $query_id})
+        MATCH (s:DevelopmentSession {id: q.session_id})
+        CREATE (r:AssistantResponse {
+          id: $id,
+          content: $content,
+          timestamp: $timestamp,
+          query_id: $query_id,
+          tools_used: $tools_used,
+          files_modified: $files_modified,
+          files_created: $files_created,
+          files_deleted: $files_deleted,
+          success: $success,
+          execution_time_ms: $execution_time_ms,
+          content_length: $content_length,
+          has_code_examples: $has_code_examples,
+          error_occurred: $error_occurred
+        })
+        CREATE (r)-[:ANSWERS]->(q)
+        SET s.total_responses = s.total_responses + 1
+        RETURN r.id as id
+        """
+        
+        params = {
+            "id": response_id,
+            "content": content,
+            "timestamp": datetime.now().isoformat(),
+            "query_id": query_id,
+            "tools_used": str(tools_used),
+            "files_modified": str(files_modified),
+            "files_created": "[]",  # Phase 1 - empty
+            "files_deleted": "[]",  # Phase 1 - empty
+            "success": success,
+            "execution_time_ms": execution_time_ms,
+            "content_length": len(content),
+            "has_code_examples": "```" in content,
+            "error_occurred": not success,
+        }
+        
+        await self.graph.query(cypher, params)
+        logger.info(f"📝 Cursor: Response recorded {response_id}")
+        return response_id
+    
+    async def end_session(self, session_id: str) -> None:
+        """Mark session as completed."""
+        cypher = """
+        MATCH (s:DevelopmentSession {id: $session_id})
+        SET s.ended_at = $ended_at,
+            s.status = 'completed'
+        RETURN s
+        """
+        
+        params = {
+            "session_id": session_id,
+            "ended_at": datetime.now().isoformat(),
+        }
+        
+        await self.graph.query(cypher, params)
+        logger.info(f"📝 Cursor: Session ended {session_id}")
+    
+    async def get_active_session(self) -> dict | None:
+        """Get currently active session."""
+        cypher = """
+        MATCH (s:DevelopmentSession {status: 'active'})
+        RETURN s
+        ORDER BY s.started_at DESC
+        LIMIT 1
+        """
+        
+        result = await self.graph.query(cypher)
+        if result:
+            return result[0]["s"]
+        return None
+    
+    async def get_session_history(
+        self,
+        session_id: str,
+        limit: int = 50
+    ) -> list[dict]:
+        """Get query/response history for session."""
+        cypher = """
+        MATCH (s:DevelopmentSession {id: $session_id})
+        MATCH (s)<-[:IN_SESSION]-(q:UserQuery)
+        MATCH (q)<-[:ANSWERS]-(r:AssistantResponse)
+        RETURN q, r
+        ORDER BY q.timestamp DESC
+        LIMIT $limit
+        """
+        
+        params = {"session_id": session_id, "limit": limit}
+        result = await self.graph.query(cypher, params)
+        
+        return [{"query": item["q"], "response": item["r"]} for item in result]
+```
+
+---
+
+## Node Implementation (LangGraph-style)
+
+```python
+# backend/app/agents/cursor/nodes.py
+
+async def cursor_record_node(
+    state: dict,
+    repository: CursorRepository
+) -> dict:
+    """
+    Record development interaction to cursor_memory graph.
+    
+    Called automatically after each request/response cycle.
+    
+    Args:
+        state: Current state with query/response data
+        repository: CursorRepository instance
+    
+    Returns:
+        Updated state with recording results
+    """
+    logger.info("📝 Cursor: Recording interaction...")
+    start_time = time.time()
+    
+    try:
+        # 1. Get or create active session
+        session = await repository.get_active_session()
+        if not session:
+            # Auto-create session
+            session_id = await repository.create_session(
+                mode=state.get("mode", "agent"),
+                git_branch=state.get("git_branch"),
+                git_commit=state.get("git_commit"),
+                project_path=state.get("project_path", "")
+            )
+        else:
+            session_id = session["id"]
+        
+        # 2. Record user query
+        query_id = await repository.create_user_query(
+            content=state["user_query"],
+            session_id=session_id,
+            mode=state.get("mode", "agent"),
+            intent=state.get("intent"),
+            mentioned_files=state.get("mentioned_files", [])
+        )
+        
+        # 3. Record assistant response
+        response_id = await repository.create_assistant_response(
+            content=state["assistant_response"],
+            query_id=query_id,
+            tools_used=state.get("tools_used", []),
+            files_modified=state.get("files_modified", []),
+            success=state.get("success", True),
+            execution_time_ms=(time.time() - start_time) * 1000
+        )
+        
+        # 4. Update state
+        state["cursor_recorded"] = True
+        state["cursor_query_id"] = query_id
+        state["cursor_response_id"] = response_id
+        state["cursor_session_id"] = session_id
+        state["error"] = None
+        
+        logger.info(
+            f"📝 Cursor: Recorded interaction "
+            f"(session={session_id}, query={query_id}, response={response_id})"
+        )
+        
+    except Exception as e:
+        logger.error(f"📝 Cursor: Failed to record: {e}", exc_info=True)
+        # CRITICAL: Don't fail main request!
+        state["cursor_recorded"] = False
+        state["error"] = str(e)
+    
+    return state
+```
+
+---
+
+## Backup & Git Integration
+
+### Per-Session Backup
+
+```python
+# backend/app/agents/cursor/backup.py
+
+async def backup_session_to_json(
+    session_id: str,
+    repository: CursorRepository
+) -> Path:
+    """
+    Export session to JSON file for git tracking.
+    
+    Called when session ends.
+    """
+    # Get session data
+    cypher = """
+    MATCH (s:DevelopmentSession {id: $session_id})
+    MATCH (s)<-[:IN_SESSION]-(q:UserQuery)
+    MATCH (q)<-[:ANSWERS]-(r:AssistantResponse)
+    RETURN s, collect(q) as queries, collect(r) as responses
+    """
+    
+    result = await repository.graph.query(cypher, {"session_id": session_id})
+    
+    if not result:
+        logger.warning(f"Session {session_id} not found for backup")
+        return None
+    
+    session_data = {
+        "session": result[0]["s"],
+        "queries": result[0]["queries"],
+        "responses": result[0]["responses"],
+        "exported_at": datetime.now().isoformat(),
+    }
+    
+    # Write to file
+    backup_dir = Path("backups/cursor_memory/exports/sessions")
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    
+    backup_file = backup_dir / f"{session_id}.json"
+    backup_file.write_text(json.dumps(session_data, indent=2, ensure_ascii=False))
+    
+    logger.info(f"📝 Cursor: Session backed up to {backup_file}")
+    
+    # Git commit (if in git repo)
+    try:
+        subprocess.run([
+            "git", "add", str(backup_file)
+        ], check=True)
+        subprocess.run([
+            "git", "commit", "-m", f"Backup: Cursor session {session_id[:8]}"
+        ], check=True)
+        logger.info(f"📝 Cursor: Session committed to git")
+    except Exception as e:
+        logger.warning(f"Git commit failed: {e}")
+    
+    return backup_file
+```
+
+### Daily Graph Export
+
+```bash
+#!/bin/bash
+# scripts/backup_cursor_graph.sh
+
+DATE=$(date +%Y-%m-%d)
+OUTPUT="backups/cursor_memory/exports/$DATE.cypher"
+
+python -c "
+from app.agents.cursor.repository import CursorRepository
+from app.db.falkordb.client import get_falkordb_client
+import asyncio
+
+async def export():
+    client = get_falkordb_client()
+    repo = CursorRepository(client)
+    
+    # Export all nodes and relationships
+    cypher = 'MATCH (n) RETURN n'
+    nodes = await repo.graph.query(cypher)
+    
+    cypher = 'MATCH ()-[r]->() RETURN r'
+    rels = await repo.graph.query(cypher)
+    
+    # Generate CREATE statements
+    # ... (implementation)
+
+asyncio.run(export())
+" > $OUTPUT
+
+git add $OUTPUT
+git commit -m "Backup: cursor_memory $DATE"
+git push
+```
+
+---
+
+## API Routes
+
+### Session Management
+
+```python
+# backend/app/api/cursor_routes.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from app.agents.cursor.repository import CursorRepository
+from app.agents.cursor.schemas import *
+from app.db.falkordb.client import get_falkordb_client
+
+router = APIRouter(prefix="/api/cursor", tags=["cursor"])
+
+@router.post("/session/start")
+async def start_session(
+    request: StartSessionRequest,
+    client: FalkorDBClient = Depends(get_falkordb_client)
+):
+    """Start new development session."""
+    repo = CursorRepository(client)
+    
+    # Check if already active session
+    active = await repo.get_active_session()
+    if active:
+        raise HTTPException(
+            400,
+            f"Session already active: {active['id']}"
+        )
+    
+    session_id = await repo.create_session(
+        mode=request.mode,
+        git_branch=request.git_branch,
+        git_commit=request.git_commit,
+        project_path=request.project_path
+    )
+    
+    return {"session_id": session_id, "status": "active"}
+
+@router.post("/session/end")
+async def end_session(
+    request: EndSessionRequest,
+    client: FalkorDBClient = Depends(get_falkordb_client)
+):
+    """End development session and trigger backup."""
+    repo = CursorRepository(client)
+    
+    await repo.end_session(request.session_id)
+    
+    # Backup to JSON
+    backup_file = await backup_session_to_json(request.session_id, repo)
+    
+    return {
+        "session_id": request.session_id,
+        "status": "completed",
+        "backup_file": str(backup_file)
+    }
+
+@router.get("/sessions")
+async def list_sessions(
+    limit: int = 10,
+    status: str | None = None,
+    client: FalkorDBClient = Depends(get_falkordb_client)
+):
+    """List development sessions."""
+    repo = CursorRepository(client)
+    
+    cypher = """
+    MATCH (s:DevelopmentSession)
+    WHERE $status IS NULL OR s.status = $status
+    RETURN s
+    ORDER BY s.started_at DESC
+    LIMIT $limit
+    """
+    
+    result = await repo.graph.query(cypher, {"status": status, "limit": limit})
+    
+    return {"sessions": [item["s"] for item in result]}
+
+@router.get("/session/{session_id}/history")
+async def get_session_history(
+    session_id: str,
+    limit: int = 50,
+    client: FalkorDBClient = Depends(get_falkordb_client)
+):
+    """Get query/response history for session."""
+    repo = CursorRepository(client)
+    
+    history = await repo.get_session_history(session_id, limit)
+    
+    return {"session_id": session_id, "history": history}
+```
+
+---
+
+## Configuration
+
+```python
+# backend/app/core/config.py
+
+class Settings(BaseSettings):
+    # ... existing settings ...
+    
+    # Cursor Agent Settings
+    cursor_graph_name: str = "cursor_memory"
+    cursor_auto_record: bool = True  # Auto-save after each request
+    cursor_session_timeout_minutes: int = 30  # Auto-end after idle
+    cursor_backup_on_end: bool = True  # JSON backup when session ends
+    cursor_git_auto_commit: bool = True  # Auto-commit backups
+```
+
+---
+
+## Integration Hook (main.py)
+
+```python
+# backend/app/main.py
+
+from app.agents.cursor.nodes import cursor_record_node
+from app.agents.cursor.repository import CursorRepository
+
+@app.middleware("http")
+async def cursor_recording_middleware(request: Request, call_next):
+    """
+    Record every request/response to cursor_memory.
+    
+    Called AFTER response generated but BEFORE sending to user.
+    """
+    if not settings.cursor_auto_record:
+        return await call_next(request)
+    
+    # Process request normally
+    response = await call_next(request)
+    
+    # Extract data for recording (if applicable)
+    # Only record API calls, not static files
+    if request.url.path.startswith("/api/"):
+        try:
+            # Build state for cursor_record_node
+            state = {
+                "user_query": await extract_query_from_request(request),
+                "assistant_response": await extract_response(response),
+                "mode": detect_mode(request),
+                "tools_used": extract_tools_used(response),
+                "files_modified": extract_files_modified(response),
+                "success": response.status_code < 400,
+            }
+            
+            # Record to cursor_memory
+            repo = CursorRepository(get_falkordb_client())
+            await cursor_record_node(state, repo)
+            
+        except Exception as e:
+            # CRITICAL: Don't fail main request!
+            logger.error(f"Cursor recording failed: {e}")
+    
+    return response
+```
+
+---
+
+## Testing Strategy
+
+### Unit Tests
+
+```python
+@pytest.mark.asyncio
+async def test_create_session(cursor_repository):
+    """Test session creation."""
+    session_id = await cursor_repository.create_session(
+        mode="agent",
+        git_branch="feature/cursor-agent",
+        project_path="/workspace"
+    )
+    
+    assert session_id is not None
+    
+    # Verify in graph
+    session = await cursor_repository.get_active_session()
+    assert session["id"] == session_id
+    assert session["status"] == "active"
+
+@pytest.mark.asyncio
+async def test_record_query_response(cursor_repository):
+    """Test query/response recording."""
+    # Create session
+    session_id = await cursor_repository.create_session(mode="agent")
+    
+    # Record query
+    query_id = await cursor_repository.create_user_query(
+        content="How to implement async repository?",
+        session_id=session_id,
+        mode="agent"
+    )
+    
+    # Record response
+    response_id = await cursor_repository.create_assistant_response(
+        content="Use async def methods...",
+        query_id=query_id,
+        tools_used=["codebase_search", "read_file"],
+        files_modified=["backend/app/agents/cursor/repository.py"]
+    )
+    
+    assert query_id is not None
+    assert response_id is not None
+    
+    # Verify history
+    history = await cursor_repository.get_session_history(session_id)
+    assert len(history) == 1
+    assert history[0]["query"]["content"] == "How to implement async repository?"
+```
+
+---
+
+## Performance Targets
+
+| Operation | Time (avg) | Notes |
+|-----------|------------|-------|
+| create_session | 10-20ms | Single CREATE |
+| create_user_query | 15-30ms | CREATE + SET session counter |
+| create_assistant_response | 15-30ms | CREATE + SET session counter |
+| get_session_history (50 items) | 30-80ms | MATCH with LIMIT |
+
+**Total overhead per request:** ~60-140ms (acceptable for auto-recording)
+
+---
+
+## Quick Reference Checklist
+
+**When implementing Cursor Agent:**
+- [ ] Use `cursor_memory` graph (окремий від chat)
+- [ ] Store timestamps as ISO strings
+- [ ] Convert lists/arrays to strings (FalkorDB limitation)
+- [ ] Log with "📝 Cursor:" prefix
+- [ ] Graceful error handling (never fail main request)
+- [ ] Return dict (not Pydantic) from node functions
+- [ ] Auto-create session if none active
+- [ ] Backup on session end
+- [ ] Git commit backups
+
+**When debugging Cursor Agent:**
+- [ ] Check `cursor_auto_record` enabled in config
+- [ ] Check FalkorDB connection to `cursor_memory` graph
+- [ ] Verify session exists and is active
+- [ ] Check logs for "📝 Cursor" entries
+- [ ] Inspect state["cursor_recorded"] and state["error"]
+- [ ] Query graph directly: `MATCH (s:DevelopmentSession) RETURN s`
+
+---
+
+**Version:** 1.0.0 (Phase 1)  
+**Created:** November 12, 2025  
+**Status:** Ready for Implementation  
+**Next Phase:** Add ArchitecturalDecision, CodePattern, Component extraction

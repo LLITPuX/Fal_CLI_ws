@@ -1,0 +1,928 @@
+---
+description: Graph Management patterns for Multi-Graph FalkorDB architecture
+alwaysApply: false
+---
+# GRAPH MANAGEMENT PATTERNS
+
+## Overview
+
+FalkorDB підтримує множинні графи в одному Redis instance. Це дозволяє кожному агенту мати ізольоване сховище даних при використанні спільної інфраструктури. Цей документ описує best practices для роботи з множинними графами.
+
+---
+
+## Multiple Graphs in Single FalkorDB
+
+### Architecture
+
+```
+┌────────────────────────────────────────┐
+│        FalkorDB Instance               │
+│        (Redis Protocol)                │
+│        Port: 6379                      │
+├────────────────────────────────────────┤
+│  Graph: cybersich_chat                 │
+│  Graph: cursor_memory                  │
+│  Graph: researcher_analytics           │
+│  Graph: meta_orchestration             │
+│  Graph: {new_agent}_data               │
+└────────────────────────────────────────┘
+```
+
+### Key Characteristics
+
+**Isolation:**
+- Графи повністю ізольовані один від одного
+- Nodes/relationships з одного графа НЕ видно в іншому
+- Indexes створюються per-graph
+- Schema migrations незалежні
+
+**Shared Resources:**
+- Спільний Redis instance
+- Спільна пам'ять (RAM)
+- Спільний CPU для query execution
+- Спільний disk для persistence
+
+**Naming Convention:**
+```python
+GRAPH_NAMES = {
+    # Agent-specific graphs
+    "cybersich_chat": "Chat interactions",
+    "cursor_memory": "Development sessions",
+    "researcher_analytics": "Research data",
+    
+    # System graphs
+    "meta_orchestration": "Cross-agent coordination",
+    
+    # Future agents
+    "{agent_name}_{purpose}": "New agent data"
+}
+```
+
+---
+
+## Graph Creation & Initialization
+
+### Programmatic Creation
+
+```python
+from falkordb import FalkorDB
+
+def initialize_graph(graph_name: str, schema: dict):
+    """
+    Create and initialize new graph with schema.
+    
+    Args:
+        graph_name: Unique graph identifier
+        schema: Dict with nodes, relationships, indexes
+    """
+    client = FalkorDB(host="falkordb", port=6379)
+    graph = client.select_graph(graph_name)
+    
+    # 1. Create indexes (performance optimization)
+    for node_label, fields in schema.get("indexes", {}).items():
+        for field in fields:
+            try:
+                graph.query(f"CREATE INDEX ON :{node_label}({field})")
+                print(f"✓ Created index: {node_label}.{field}")
+            except Exception as e:
+                print(f"✗ Index exists or failed: {e}")
+    
+    # 2. Create constraints (data integrity)
+    for constraint in schema.get("constraints", []):
+        try:
+            graph.query(constraint)
+            print(f"✓ Created constraint: {constraint[:50]}...")
+        except Exception as e:
+            print(f"✗ Constraint exists or failed: {e}")
+    
+    # 3. Seed data (optional)
+    for seed_query in schema.get("seed_data", []):
+        graph.query(seed_query)
+        print(f"✓ Seeded: {seed_query[:50]}...")
+    
+    # 4. Create metadata node
+    metadata_query = """
+    MERGE (meta:GraphMetadata {graph_name: $name})
+    ON CREATE SET
+      meta.created_at = $timestamp,
+      meta.schema_version = $version,
+      meta.last_migration = NULL,
+      meta.migrations_applied = []
+    """
+    
+    graph.query(metadata_query, {
+        "name": graph_name,
+        "timestamp": datetime.now().isoformat(),
+        "version": schema.get("version", "1.0.0")
+    })
+    
+    print(f"✓ Graph '{graph_name}' initialized")
+    return graph
+```
+
+### Schema Definition Example
+
+```python
+CURSOR_MEMORY_SCHEMA = {
+    "version": "1.0.0",
+    
+    "indexes": {
+        "DevelopmentSession": ["started_at", "status"],
+        "UserQuery": ["session_id", "timestamp"],
+        "AssistantResponse": ["query_id", "timestamp"],
+    },
+    
+    "constraints": [
+        # FalkorDB doesn't support UNIQUE constraints yet
+        # Will be added in future versions
+    ],
+    
+    "seed_data": [
+        # Optional: Create initial data
+        """
+        CREATE (:GraphMetadata {
+          graph_name: 'cursor_memory',
+          description: 'Development session tracking',
+          owner_agent: 'cursor'
+        })
+        """
+    ]
+}
+
+# Initialize
+initialize_graph("cursor_memory", CURSOR_MEMORY_SCHEMA)
+```
+
+### Initialization Script
+
+```python
+# backend/scripts/init_all_graphs.py
+
+import asyncio
+from app.db.falkordb.client import FalkorDBClient
+
+GRAPHS_CONFIG = {
+    "cybersich_chat": {
+        "version": "2.0.0",
+        "indexes": {
+            "Message": ["timestamp", "session_id"],
+            "ChatSession": ["created_at", "user_id"],
+            "Chunk": ["message_id"],
+            "Entity": ["canonical_name", "type"],
+        }
+    },
+    "cursor_memory": {
+        "version": "1.0.0",
+        "indexes": {
+            "DevelopmentSession": ["started_at", "status"],
+            "UserQuery": ["session_id", "timestamp"],
+            "AssistantResponse": ["query_id"],
+        }
+    },
+    "meta_orchestration": {
+        "version": "1.0.0",
+        "indexes": {
+            "AgentRegistry": ["agent_name"],
+            "InterAgentMessage": ["to_agent", "processed", "timestamp"],
+            "SharedEntity": ["canonical_name", "type"],
+        }
+    }
+}
+
+async def init_all_graphs():
+    """Initialize all graphs with their schemas."""
+    client = FalkorDBClient(host="falkordb", port=6379, graph_name="temp")
+    await client.connect()
+    
+    for graph_name, schema in GRAPHS_CONFIG.items():
+        print(f"\n=== Initializing {graph_name} ===")
+        initialize_graph(graph_name, schema)
+    
+    await client.disconnect()
+    print("\n✓ All graphs initialized")
+
+if __name__ == "__main__":
+    asyncio.run(init_all_graphs())
+```
+
+---
+
+## Cross-Graph Query Patterns
+
+### ❌ WRONG: Trying to JOIN Graphs
+
+```cypher
+-- ❌ THIS WILL NOT WORK
+-- FalkorDB doesn't support cross-graph queries
+
+-- Attempting to join cybersich_chat and cursor_memory:
+MATCH (m:Message)  -- from cybersich_chat
+MATCH (q:UserQuery)  -- from cursor_memory ??? 
+WHERE m.content = q.content
+RETURN m, q
+```
+
+**Result:** Only searches current graph, won't find nodes from other graph.
+
+### ✅ CORRECT: Application-Level Merging
+
+```python
+async def search_across_graphs(search_term: str):
+    """Search for term across multiple graphs."""
+    client = get_falkordb_client()
+    
+    results = {
+        "chat": [],
+        "development": [],
+        "research": [],
+    }
+    
+    # 1. Search in cybersich_chat
+    chat_graph = client.select_graph("cybersich_chat")
+    chat_query = """
+    MATCH (m:Message)
+    WHERE m.content CONTAINS $term
+    RETURN m
+    ORDER BY m.timestamp DESC
+    LIMIT 10
+    """
+    chat_results = await chat_graph.query(chat_query, {"term": search_term})
+    results["chat"] = [r["m"] for r in chat_results]
+    
+    # 2. Search in cursor_memory
+    cursor_graph = client.select_graph("cursor_memory")
+    cursor_query = """
+    MATCH (q:UserQuery)
+    WHERE q.content CONTAINS $term
+    RETURN q
+    ORDER BY q.timestamp DESC
+    LIMIT 10
+    """
+    cursor_results = await cursor_graph.query(cursor_query, {"term": search_term})
+    results["development"] = [r["q"] for r in cursor_results]
+    
+    # 3. Combine and sort by timestamp
+    all_items = []
+    for source, items in results.items():
+        for item in items:
+            all_items.append({
+                "source": source,
+                "data": item,
+                "timestamp": item.get("timestamp")
+            })
+    
+    all_items.sort(key=lambda x: x["timestamp"], reverse=True)
+    
+    return all_items
+```
+
+### Pattern: Meta-Graph for Cross-References
+
+```python
+async def link_entities_across_graphs(
+    entity_name: str,
+    entity_type: str,
+    source_graph: str,
+    source_node_id: str
+):
+    """
+    Create reference in meta_orchestration for cross-graph links.
+    """
+    meta_graph = client.select_graph("meta_orchestration")
+    
+    # 1. Create or update shared entity
+    cypher = """
+    MERGE (e:SharedEntity {
+      canonical_name: $name,
+      type: $type
+    })
+    ON CREATE SET
+      e.id = $id,
+      e.first_seen = $timestamp,
+      e.mention_count = 1,
+      e.sources = [$source]
+    ON MATCH SET
+      e.mention_count = e.mention_count + 1,
+      e.last_seen = $timestamp,
+      e.sources = e.sources + $source
+    
+    RETURN e.id as entity_id
+    """
+    
+    result = await meta_graph.query(cypher, {
+        "name": entity_name.lower(),
+        "type": entity_type,
+        "id": str(uuid.uuid4()),
+        "timestamp": datetime.now().isoformat(),
+        "source": f"{source_graph}:{source_node_id}"
+    })
+    
+    entity_id = result[0]["entity_id"]
+    
+    # 2. Store reference in source graph node
+    source_graph_obj = client.select_graph(source_graph)
+    update_query = f"""
+    MATCH (n)
+    WHERE ID(n) = {source_node_id}
+    SET n.meta_entity_id = $entity_id
+    """
+    
+    await source_graph_obj.query(update_query, {"entity_id": entity_id})
+    
+    return entity_id
+```
+
+---
+
+## Shared Entities Strategy
+
+### Concept
+
+Entities like "Docker", "Kubernetes", "Python" згадуються в різних графах. Замість дублювання, зберігаємо canonical version у `meta_orchestration`.
+
+### Implementation
+
+```cypher
+// In meta_orchestration graph
+(:SharedEntity {
+  id: "uuid",
+  canonical_name: "docker",  // Lowercase normalized
+  type: "TECH",
+  first_seen: "ISO8601",
+  last_seen: "ISO8601",
+  mention_count: 42,
+  sources: [
+    "cybersich_chat:msg123",
+    "cursor_memory:query456",
+    "researcher_analytics:task789"
+  ],
+  aliases: ["Docker", "docker.io", "Docker Engine"]
+})
+
+// In cybersich_chat graph
+(:Entity {
+  id: "local-id",
+  name: "Docker",
+  type: "TECH",
+  meta_entity_id: "uuid"  // Reference to shared entity
+})
+
+// In cursor_memory graph
+(:Technology {
+  id: "local-id",
+  name: "Docker",
+  meta_entity_id: "uuid"  // Same reference
+})
+```
+
+### Synchronization Pattern
+
+```python
+async def sync_entity_to_meta(
+    entity_name: str,
+    entity_type: str,
+    source_graph: str,
+    local_entity_id: str
+):
+    """
+    Sync local entity to meta_orchestration.
+    
+    Called when:
+    - New entity created in any graph
+    - Entity mentioned again (increment count)
+    """
+    meta = client.select_graph("meta_orchestration")
+    
+    canonical_name = normalize_entity_name(entity_name, entity_type)
+    
+    cypher = """
+    MERGE (e:SharedEntity {
+      canonical_name: $name,
+      type: $type
+    })
+    ON CREATE SET
+      e.id = $id,
+      e.first_seen = $now,
+      e.mention_count = 1,
+      e.sources = [$source],
+      e.aliases = [$original_name]
+    ON MATCH SET
+      e.mention_count = e.mention_count + 1,
+      e.last_seen = $now,
+      e.sources = CASE
+        WHEN NOT $source IN e.sources THEN e.sources + $source
+        ELSE e.sources
+      END,
+      e.aliases = CASE
+        WHEN NOT $original_name IN e.aliases THEN e.aliases + $original_name
+        ELSE e.aliases
+      END
+    
+    RETURN e.id as meta_id
+    """
+    
+    result = await meta.query(cypher, {
+        "name": canonical_name,
+        "type": entity_type,
+        "id": str(uuid.uuid4()),
+        "now": datetime.now().isoformat(),
+        "source": f"{source_graph}:{local_entity_id}",
+        "original_name": entity_name
+    })
+    
+    return result[0]["meta_id"]
+
+def normalize_entity_name(name: str, entity_type: str) -> str:
+    """Normalize entity name for deduplication."""
+    canonical = name.lower().strip()
+    
+    # Type-specific normalization
+    if entity_type == "TECH":
+        # Remove version numbers
+        canonical = re.sub(r'\s+\d+(\.\d+)*', '', canonical)
+        
+        # Known aliases
+        aliases = {
+            "k8s": "kubernetes",
+            "js": "javascript",
+            "ts": "typescript",
+            "py": "python",
+        }
+        canonical = aliases.get(canonical, canonical)
+    
+    return canonical
+```
+
+---
+
+## Graph Isolation & Security
+
+### Access Control Pattern
+
+```python
+class GraphAccessControl:
+    """
+    Application-level access control for graphs.
+    
+    FalkorDB has no built-in RBAC, so we enforce in code.
+    """
+    
+    # Define which agents can access which graphs
+    PERMISSIONS = {
+        "clerk": {
+            "read": ["cybersich_chat"],
+            "write": ["cybersich_chat"],
+        },
+        "subconscious": {
+            "read": ["cybersich_chat"],
+            "write": ["cybersich_chat"],  # For adding relationships
+        },
+        "orchestrator": {
+            "read": ["cybersich_chat", "meta_orchestration"],
+            "write": ["cybersich_chat", "meta_orchestration"],
+        },
+        "cursor": {
+            "read": ["cursor_memory", "meta_orchestration"],
+            "write": ["cursor_memory", "meta_orchestration"],
+        },
+        "researcher": {
+            "read": ["researcher_analytics"],
+            "write": ["researcher_analytics"],
+        },
+        # Admin has access to all
+        "admin": {
+            "read": ["*"],
+            "write": ["*"],
+        }
+    }
+    
+    @classmethod
+    def can_read(cls, agent: str, graph: str) -> bool:
+        """Check if agent can read from graph."""
+        perms = cls.PERMISSIONS.get(agent, {})
+        read_graphs = perms.get("read", [])
+        return "*" in read_graphs or graph in read_graphs
+    
+    @classmethod
+    def can_write(cls, agent: str, graph: str) -> bool:
+        """Check if agent can write to graph."""
+        perms = cls.PERMISSIONS.get(agent, {})
+        write_graphs = perms.get("write", [])
+        return "*" in write_graphs or graph in write_graphs
+    
+    @classmethod
+    def enforce(cls, agent: str, graph: str, operation: str):
+        """
+        Enforce access control.
+        
+        Raises:
+            PermissionError: If access denied
+        """
+        if operation == "read" and not cls.can_read(agent, graph):
+            raise PermissionError(
+                f"Agent '{agent}' cannot read from graph '{graph}'"
+            )
+        
+        if operation == "write" and not cls.can_write(agent, graph):
+            raise PermissionError(
+                f"Agent '{agent}' cannot write to graph '{graph}'"
+            )
+
+
+# Usage in repository
+class CursorRepository:
+    def __init__(self, client: FalkorDBClient, agent: str = "cursor"):
+        self.client = client
+        self.agent = agent
+        self.graph_name = "cursor_memory"
+        
+        # Enforce access control
+        GraphAccessControl.enforce(agent, self.graph_name, "write")
+        
+        self.graph = client.select_graph(self.graph_name)
+```
+
+### Data Isolation Verification
+
+```python
+async def verify_graph_isolation():
+    """
+    Test that graphs are truly isolated.
+    
+    Run this after setup to ensure no data leakage.
+    """
+    client = get_falkordb_client()
+    
+    # 1. Create test node in graph A
+    graph_a = client.select_graph("test_graph_a")
+    await graph_a.query("""
+        CREATE (n:TestNode {id: 'A', secret: 'data_from_A'})
+    """)
+    
+    # 2. Try to find it in graph B
+    graph_b = client.select_graph("test_graph_b")
+    result = await graph_b.query("""
+        MATCH (n:TestNode {id: 'A'})
+        RETURN n
+    """)
+    
+    # 3. Should be empty
+    assert len(result) == 0, "❌ ISOLATION BREACH: Node from A visible in B!"
+    
+    print("✓ Graph isolation verified")
+    
+    # Cleanup
+    await graph_a.query("MATCH (n:TestNode) DELETE n")
+```
+
+---
+
+## Backup Procedures per Graph
+
+### Individual Graph Backup
+
+```python
+async def backup_single_graph(
+    graph_name: str,
+    output_path: Path
+):
+    """
+    Backup single graph to Cypher file.
+    
+    Can be restored to new FalkorDB instance.
+    """
+    client = get_falkordb_client()
+    graph = client.select_graph(graph_name)
+    
+    cypher_statements = []
+    
+    # 1. Export nodes
+    nodes_result = await graph.query("MATCH (n) RETURN n")
+    for item in nodes_result:
+        node = item["n"]
+        labels = ":".join(node.get("labels", ["Node"]))
+        props = node.get("properties", {})
+        
+        # Generate CREATE statement
+        props_str = ", ".join(f"{k}: ${k}" for k in props.keys())
+        create_stmt = f"CREATE (n:{labels} {{{props_str}}})"
+        cypher_statements.append((create_stmt, props))
+    
+    # 2. Export relationships
+    rels_result = await graph.query("MATCH ()-[r]->() RETURN r")
+    for item in rels_result:
+        rel = item["r"]
+        # ... similar logic
+    
+    # 3. Write to file
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with output_path.open("w") as f:
+        f.write(f"// Backup of graph: {graph_name}\n")
+        f.write(f"// Created: {datetime.now().isoformat()}\n\n")
+        
+        for stmt, params in cypher_statements:
+            # Write parametrized queries with values
+            f.write(f"{stmt};\n")
+    
+    print(f"✓ Backed up {graph_name} to {output_path}")
+    return output_path
+
+
+async def backup_all_graphs():
+    """Backup all graphs to separate files."""
+    backup_dir = Path("backups")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    graphs = [
+        "cybersich_chat",
+        "cursor_memory",
+        "researcher_analytics",
+        "meta_orchestration"
+    ]
+    
+    for graph_name in graphs:
+        output = backup_dir / graph_name / f"{timestamp}.cypher"
+        await backup_single_graph(graph_name, output)
+    
+    print(f"\n✓ All graphs backed up to {backup_dir}")
+```
+
+### Differential Backup (Since Last Export)
+
+```python
+async def backup_graph_since(
+    graph_name: str,
+    since_timestamp: datetime,
+    output_path: Path
+):
+    """
+    Backup only nodes/rels created/modified since timestamp.
+    
+    Requires timestamp tracking on all nodes.
+    """
+    graph = client.select_graph(graph_name)
+    
+    # Query nodes created since timestamp
+    cypher = """
+    MATCH (n)
+    WHERE n.created_at > $since OR n.updated_at > $since
+    RETURN n
+    """
+    
+    result = await graph.query(cypher, {
+        "since": since_timestamp.isoformat()
+    })
+    
+    # ... export logic similar to backup_single_graph
+```
+
+### Automated Backup Schedule
+
+```bash
+#!/bin/bash
+# scripts/backup_graphs_cron.sh
+
+# Run daily at 2 AM
+# Crontab: 0 2 * * * /path/to/backup_graphs_cron.sh
+
+cd /app
+
+# Backup each graph
+python scripts/backup_graph.py cybersich_chat
+python scripts/backup_graph.py cursor_memory
+python scripts/backup_graph.py researcher_analytics
+python scripts/backup_graph.py meta_orchestration
+
+# Compress old backups (keep 30 days)
+find backups -name "*.cypher" -mtime +30 -exec gzip {} \;
+
+# Git commit
+git add backups/
+git commit -m "Automated backup $(date +%Y-%m-%d)"
+git push
+
+echo "✓ Backup completed"
+```
+
+---
+
+## Performance Considerations
+
+### Graph Size Monitoring
+
+```python
+async def get_graph_stats(graph_name: str) -> dict:
+    """Get size and performance stats for graph."""
+    graph = client.select_graph(graph_name)
+    
+    stats = {}
+    
+    # Node count
+    result = await graph.query("MATCH (n) RETURN count(n) as count")
+    stats["node_count"] = result[0]["count"]
+    
+    # Relationship count
+    result = await graph.query("MATCH ()-[r]->() RETURN count(r) as count")
+    stats["relationship_count"] = result[0]["count"]
+    
+    # Node types
+    result = await graph.query("""
+        MATCH (n)
+        RETURN labels(n)[0] as label, count(*) as count
+        ORDER BY count DESC
+    """)
+    stats["node_types"] = {r["label"]: r["count"] for r in result}
+    
+    # Relationship types
+    result = await graph.query("""
+        MATCH ()-[r]->()
+        RETURN type(r) as type, count(*) as count
+        ORDER BY count DESC
+    """)
+    stats["relationship_types"] = {r["type"]: r["count"] for r in result}
+    
+    # Memory estimate (rough)
+    avg_node_size = 500  # bytes
+    avg_rel_size = 200   # bytes
+    stats["estimated_memory_mb"] = (
+        stats["node_count"] * avg_node_size +
+        stats["relationship_count"] * avg_rel_size
+    ) / 1024 / 1024
+    
+    return stats
+
+
+async def monitor_all_graphs():
+    """Monitor all graphs and alert if thresholds exceeded."""
+    graphs = ["cybersich_chat", "cursor_memory", "researcher_analytics"]
+    
+    total_memory = 0
+    
+    for graph_name in graphs:
+        stats = await get_graph_stats(graph_name)
+        total_memory += stats["estimated_memory_mb"]
+        
+        print(f"\n{graph_name}:")
+        print(f"  Nodes: {stats['node_count']:,}")
+        print(f"  Relationships: {stats['relationship_count']:,}")
+        print(f"  Memory: {stats['estimated_memory_mb']:.1f} MB")
+        
+        # Alert if too large
+        if stats["node_count"] > 1_000_000:
+            print(f"  ⚠️ WARNING: Graph approaching 1M nodes, consider archiving")
+        
+        if stats["estimated_memory_mb"] > 1000:
+            print(f"  ⚠️ WARNING: Graph using >1GB memory")
+    
+    print(f"\nTotal estimated memory: {total_memory:.1f} MB")
+```
+
+### Query Performance per Graph
+
+```python
+async def profile_graph_queries(graph_name: str):
+    """Profile common queries to identify bottlenecks."""
+    graph = client.select_graph(graph_name)
+    
+    queries = {
+        "find_by_timestamp": "MATCH (n) WHERE n.timestamp > $time RETURN n LIMIT 10",
+        "find_by_id": "MATCH (n {id: $id}) RETURN n",
+        "traverse_relationships": "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100",
+    }
+    
+    for query_name, cypher in queries.items():
+        start = time.time()
+        
+        # Execute with sample params
+        await graph.query(cypher, {
+            "time": (datetime.now() - timedelta(days=7)).isoformat(),
+            "id": "sample-id"
+        })
+        
+        elapsed_ms = (time.time() - start) * 1000
+        
+        print(f"{query_name}: {elapsed_ms:.1f}ms")
+        
+        if elapsed_ms > 100:
+            print(f"  ⚠️ SLOW: Consider adding index")
+```
+
+---
+
+## Migration Patterns
+
+### Adding New Graph
+
+```python
+# 1. Define schema
+NEW_GRAPH_SCHEMA = {
+    "version": "1.0.0",
+    "indexes": {
+        "NodeType": ["field1", "field2"]
+    }
+}
+
+# 2. Initialize
+initialize_graph("new_agent_graph", NEW_GRAPH_SCHEMA)
+
+# 3. Register in meta
+meta = client.select_graph("meta_orchestration")
+await meta.query("""
+    CREATE (:GraphRegistry {
+      graph_name: 'new_agent_graph',
+      created_at: $now,
+      owner_agent: 'new_agent',
+      purpose: 'New agent data storage'
+    })
+""", {"now": datetime.now().isoformat()})
+
+# 4. Update access control
+GraphAccessControl.PERMISSIONS["new_agent"] = {
+    "read": ["new_agent_graph", "meta_orchestration"],
+    "write": ["new_agent_graph", "meta_orchestration"],
+}
+
+# 5. Add to backup script
+# ... update backup_all_graphs()
+```
+
+### Migrating Data Between Graphs
+
+```python
+async def migrate_entities_to_meta():
+    """
+    One-time migration: Extract entities from cybersich_chat
+    and create SharedEntity nodes in meta_orchestration.
+    """
+    chat_graph = client.select_graph("cybersich_chat")
+    meta_graph = client.select_graph("meta_orchestration")
+    
+    # Get all entities from chat
+    result = await chat_graph.query("""
+        MATCH (e:Entity)
+        RETURN e.canonical_name as name, e.type as type, count(*) as mentions
+    """)
+    
+    # Create in meta
+    for item in result:
+        await meta_graph.query("""
+            CREATE (:SharedEntity {
+              canonical_name: $name,
+              type: $type,
+              mention_count: $mentions,
+              migrated_from: 'cybersich_chat',
+              migrated_at: $now
+            })
+        """, {
+            "name": item["name"],
+            "type": item["type"],
+            "mentions": item["mentions"],
+            "now": datetime.now().isoformat()
+        })
+    
+    print(f"✓ Migrated {len(result)} entities to meta")
+```
+
+---
+
+## Quick Reference
+
+**Creating new graph:**
+```python
+schema = {"version": "1.0.0", "indexes": {...}}
+initialize_graph("my_graph", schema)
+```
+
+**Switching between graphs:**
+```python
+graph_a = client.select_graph("graph_a")
+graph_b = client.select_graph("graph_b")
+# Each operates independently
+```
+
+**Cross-graph search:**
+```python
+# Query each separately, merge in code
+results_a = await graph_a.query("...")
+results_b = await graph_b.query("...")
+combined = merge_results(results_a, results_b)
+```
+
+**Backup single graph:**
+```python
+await backup_single_graph("cursor_memory", Path("backup.cypher"))
+```
+
+**Monitor graph size:**
+```python
+stats = await get_graph_stats("cybersich_chat")
+print(f"Nodes: {stats['node_count']}")
+```
+
+---
+
+**Version:** 1.0.0  
+**Created:** November 12, 2025  
+**Status:** Production Ready  
+**Next Review:** After adding 5+ graphs

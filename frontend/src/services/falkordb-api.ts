@@ -80,8 +80,9 @@ class FalkorDBApiClient {
   /**
    * Get graph statistics
    */
-  async getStats(): Promise<GraphStats> {
-    return this.request<GraphStats>('/stats', {
+  async getStats(graphName?: string): Promise<GraphStats> {
+    const query = graphName ? `?graph_name=${encodeURIComponent(graphName)}` : '';
+    return this.request<GraphStats>(`/stats${query}`, {
       method: 'GET',
     });
   }

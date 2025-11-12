@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Shield, Scroll, Sparkles } from 'lucide-react';
 import { ChatMessage } from '../components/chat/ChatMessage';
 import { ChatInput } from '../components/chat/ChatInput';
-import { ChatHeader } from '../components/chat/ChatHeader';
+import { CybersichHeader } from '../components/CybersichHeader';
 import * as chatApi from '../services/chat-api';
 import type { Message } from '../types/chat';
 
@@ -97,12 +97,16 @@ export default function ChatPage() {
         backgroundRepeat: 'no-repeat',
       }}
     >
-      <div className="max-w-5xl mx-auto h-screen flex flex-col">
-        <ChatHeader />
+      <CybersichHeader 
+        title="Cybersich" 
+        subtitle="AI Помічник · Chat" 
+      />
+      
+      <div className="max-w-7xl mx-auto h-[calc(100vh-80px)] flex flex-col pt-6">
         
         {/* Suggestion Cards */}
         {messages.length === 1 && (
-          <div className="px-6 py-8">
+          <div className="px-6 pb-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
               <SuggestionCard
                 icon={<Shield className="w-6 h-6" />}

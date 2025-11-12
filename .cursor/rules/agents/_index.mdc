@@ -6,11 +6,32 @@ alwaysApply: false
 
 ## Purpose
 
-Мультиагентна система для Cybersich Chat на базі LangGraph. Три агенти працюють послідовно для обробки кожного повідомлення.
+Мультиагентна екосистема Cybersich з підтримкою множинних графів у FalkorDB. Агенти працюють у різних контекстах: chat, development, analytics, координуючись через meta-orchestration граф.
 
 ---
 
 ## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    MULTI-GRAPH ECOSYSTEM                      │
+│                    FalkorDB (Single Instance)                 │
+└────────────────────────────┬─────────────────────────────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        │                    │                    │
+┌───────▼────────┐  ┌────────▼──────────┐  ┌────▼──────────────┐
+│ cybersich_chat │  │  cursor_memory    │  │researcher_analytics│
+└────────────────┘  └───────────────────┘  └────────────────────┘
+        │                    │                    │
+        └────────────────────┼────────────────────┘
+                             │
+                  ┌──────────▼───────────┐
+                  │ meta_orchestration   │
+                  └──────────────────────┘
+```
+
+### Chat Pipeline (cybersich_chat graph)
 
 ```
 User Message
@@ -42,6 +63,22 @@ LangGraph Workflow
     Response to User
 ```
 
+### Development Pipeline (cursor_memory graph)
+
+```
+Developer Request (Cursor IDE)
+    ↓
+┌─────────────────────────────────────┐
+│  Курсор (Cursor Agent)              │  Phase 1 ✅
+│  - Auto-record кожен запит/відповідь│
+│  - Track tools_used, files_modified │
+│  - Link to DevelopmentSession       │
+└──────────────┬──────────────────────┘
+               ↓
+    Development Session History
+    + Backup to Git
+```
+
 ---
 
 ## Agent Modules
@@ -70,6 +107,17 @@ backend/app/agents/
     └── schemas.py
 ```
 
+├── cursor/           # Phase 1 ✅ Development Agent
+│   ├── nodes.py
+│   ├── repository.py
+│   └── schemas.py
+│
+└── orchestrator/     # Phase 3 ⏳ Chat Flow
+    ├── nodes.py
+    ├── router.py
+    └── schemas.py
+```
+
 ### Standalone Agent (Not in Chat Flow)
 
 ```
@@ -80,13 +128,20 @@ backend/app/services/
 
 ### Rules Files
 
-**Chat Pipeline:**
+**Ecosystem & Architecture:**
+- **[agent-ecosystem.mdc](agent-ecosystem.mdc)** - Multi-Graph Architecture overview
+- **[graph-management.mdc](graph-management.mdc)** - Managing multiple graphs
+
+**Chat Pipeline (cybersich_chat graph):**
 - **[langgraph-patterns.mdc](langgraph-patterns.mdc)** - Загальні LangGraph patterns
 - **[clerk.mdc](clerk.mdc)** - Писарь Agent (Phase 1)
 - **[subconscious.mdc](subconscious.mdc)** - Підсвідомість Agent (Phase 2 - planning)
 - **[orchestrator.mdc](orchestrator.mdc)** - Оркестратор Agent (Phase 3 - planning)
 
-**Standalone:**
+**Development Agent (cursor_memory graph):**
+- **[cursor.mdc](cursor.mdc)** - Cursor Agent (Phase 1)
+
+**Standalone (researcher_analytics graph):**
 - **[researcher.mdc](researcher.mdc)** - Дослідник Agent (research playground)
 
 ---
@@ -167,6 +222,27 @@ class ChatState(BaseModel):
 
 ---
 
+### Development Agent
+
+#### Курсор (Cursor Agent) - Phase 1 ✅
+
+**ПРИЗНАЧЕННЯ:** Автоматичне збереження історії розробки
+
+**ТІЛЬКИ:**
+- ✅ Записувати кожен UserQuery і AssistantResponse
+- ✅ Трекати tools_used та files_modified
+- ✅ Групувати по DevelopmentSession
+- ✅ Автоматичний backup в JSON + git
+
+**ЗАБОРОНЕНО:**
+- ❌ Аналізувати код або приймати рішення
+- ❌ Інтегруватись в chat flow (окремий граф)
+- ❌ Модифікувати content запитів/відповідей
+
+**Graph:** `cursor_memory` (окремий від chat)
+
+---
+
 ### Standalone Agent
 
 #### Дослідник (Researcher) - Exists ✅
@@ -192,14 +268,19 @@ class ChatState(BaseModel):
 
 ### Назви агентів
 
+**Chat Pipeline:**
 - **Писарь (Clerk)** - Козацький писар, що вів реєстри та хроніки Січі
 - **Підсвідомість (Subconscious)** - Колективна пам'ять народу, зв'язки між подіями
 - **Оркестратор (Orchestrator)** - Отаман, що приймає стратегічні рішення
+
+**Development:**
+- **Курсор (Cursor)** - Хроніст розробки, що документує архітектурні рішення та еволюцію проекту
 
 **ВАЖЛИВО:** Ці назви не просто красиві метафори, а відображають функціональні ролі:
 - Писар тільки записує (не інтерпретує)
 - Підсвідомість знаходить паттерни (не вирішує)
 - Отаман приймає рішення (не записує)
+- Курсор документує історію (для майбутніх поколінь розробників)
 
 ---
 
@@ -355,13 +436,28 @@ logger.info("🎯 Оркестратор: Приймаю рішення...")
 
 ## Quick Reference
 
-**When working on Писарь:** Read `agents/clerk.mdc`  
-**When working on Підсвідомість:** Read `agents/subconscious.mdc`  
-**When working on LangGraph flow:** Read `agents/langgraph-patterns.mdc`  
-**When need overview:** Read `agents/_index.mdc`
+**Ecosystem & Architecture:**
+- `agents/agent-ecosystem.mdc` - Multi-Graph Architecture overview
+- `agents/graph-management.mdc` - Managing multiple graphs
+
+**Chat Agents:**
+- `agents/clerk.mdc` - Писарь Agent (Phase 1)
+- `agents/subconscious.mdc` - Підсвідомість Agent (Phase 2 - planning)
+- `agents/orchestrator.mdc` - Оркестратор Agent (Phase 3 - planning)
+- `agents/langgraph-patterns.mdc` - LangGraph workflow patterns
+
+**Development Agents:**
+- `agents/cursor.mdc` - Cursor Agent (Phase 1)
+
+**Standalone:**
+- `agents/researcher.mdc` - Дослідник Agent (research playground)
+
+**System:**
+- `agents/_index.mdc` - цей файл (overview всієї екосистеми)
 
 ---
 
-**Version:** 1.0.0  
+**Version:** 2.0.0  
 **Created:** November 6, 2025  
-**Status:** Phase 1 complete, ready for Phase 2
+**Updated:** November 12, 2025 (Multi-Graph Architecture + Cursor Agent)  
+**Status:** Phase 1 complete, Phase 2 architecture ready

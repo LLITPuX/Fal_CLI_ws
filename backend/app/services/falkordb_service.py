@@ -183,8 +183,11 @@ class FalkorDBService:
             logger.error(f"Query execution failed: {e}", exc_info=True)
             raise ValidationError(f"Query execution failed: {str(e)}")
 
-    async def get_graph_stats(self) -> GraphStats:
+    async def get_graph_stats(self, graph_name: str | None = None) -> GraphStats:
         """Get graph statistics.
+
+        Args:
+            graph_name: Optional graph name. If None, uses default graph.
 
         Returns:
             Graph statistics
@@ -193,7 +196,7 @@ class FalkorDBService:
             ValidationError: If stats retrieval fails
         """
         try:
-            stats = await self._client.get_stats()
+            stats = await self._client.get_stats(graph_name)
             
             return GraphStats(
                 node_count=stats["node_count"],

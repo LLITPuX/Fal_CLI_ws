@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     subconscious_batch_size: int = 100  # Max chunks per API batch
     subconscious_timeout: int = 30  # seconds
 
+    # Cursor Agent Settings
+    cursor_graph_name: str = "cursor_memory"
+    cursor_auto_record: bool = True  # Auto-save after each request
+    cursor_session_timeout_minutes: int = 30  # Auto-end after idle
+    cursor_backup_on_end: bool = True  # JSON backup when session ends
+    cursor_git_auto_commit: bool = False  # Auto-commit backups (disabled for now)
+
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 

@@ -190,8 +190,11 @@ class FalkorDBClient:
         # Primitive types
         return value
 
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self, graph_name: str | None = None) -> dict[str, Any]:
         """Get graph statistics.
+
+        Args:
+            graph_name: Optional graph name. If None, uses current graph.
 
         Returns:
             Dictionary with graph statistics
@@ -200,6 +203,11 @@ class FalkorDBClient:
             DatabaseError: If stats retrieval fails
         """
         self._ensure_connected()
+        
+        # Switch graph if specified
+        original_graph = self._graph_name
+        if graph_name and graph_name != self._graph_name:
+            self.select_graph(graph_name)
         
         try:
             # Get node count
@@ -237,10 +245,13 @@ class FalkorDBClient:
                 "relationship_types": relationship_types,
                 "graph_name": self._graph_name,
             }
-            
         except Exception as e:
             logger.error(f"Failed to get graph stats: {e}", exc_info=True)
             raise DatabaseError(f"Stats retrieval failed: {str(e)}")
+        finally:
+            # Restore original graph if we switched
+            if graph_name and graph_name != original_graph:
+                self.select_graph(original_graph)
 
     async def health_check(self) -> bool:
         """Check if FalkorDB connection is healthy.

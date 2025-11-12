@@ -1,7 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
-import { Navigation } from './components/Navigation';
 import { GeminiPage } from './pages/GeminiPage';
-import { FalkorDBPage } from './pages/FalkorDBPage';
+import GraphVisualizationPage from './pages/GraphVisualizationPage';
 import ChatPage from './pages/ChatPage';
 import './styles/App.css';
 import './styles/globals.css';
@@ -12,11 +11,9 @@ function AppContent() {
 
   return (
     <div className="app">
-      {!isChatPage && <Navigation />}
-      
       <Routes>
         <Route path="/" element={<GeminiPage />} />
-        <Route path="/falkordb" element={<FalkorDBPage />} />
+        <Route path="/falkordb" element={<GraphVisualizationPage />} />
         <Route path="/chat" element={<ChatPage />} />
       </Routes>
 

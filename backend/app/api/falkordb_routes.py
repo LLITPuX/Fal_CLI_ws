@@ -145,10 +145,12 @@ async def execute_query(
 )
 async def get_stats(
     service: FalkorDBServiceDep,
+    graph_name: str | None = None,
 ) -> GraphStats:
     """Get graph statistics.
 
     Args:
+        graph_name: Optional graph name to query stats for
         service: FalkorDB service instance
 
     Returns:
@@ -158,7 +160,7 @@ async def get_stats(
         HTTPException: If stats retrieval fails
     """
     try:
-        return await service.get_graph_stats()
+        return await service.get_graph_stats(graph_name)
     except Exception as e:
         logger.error(f"Stats retrieval failed: {e}", exc_info=True)
         raise HTTPException(
