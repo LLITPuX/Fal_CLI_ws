@@ -52,7 +52,8 @@
     "recharts": "^2.15.2",
     "sonner": "^2.0.3",
     "tailwind-merge": "^2.5.4",
-    "vaul": "^1.1.2"
+    "vaul": "^1.1.2",
+    "vis-network": "^9.1.9"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

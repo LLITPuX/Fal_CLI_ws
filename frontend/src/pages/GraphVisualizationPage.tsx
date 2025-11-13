@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { Network, Database, Sparkles, Activity, RefreshCw } from 'lucide-react';
 import { CybersichHeader } from '../components/CybersichHeader';
 import { falkorDBApi } from '../services/falkordb-api';
+import SimpleGraphViewer from '../components/SimpleGraphViewer';
 
 // Same background image as ChatPage - Cossack warriors!
 const backgroundImage = '/2d76d3ed895b0324df0b5302921cd6c50e5b7a9e.png';
@@ -39,9 +40,6 @@ const AVAILABLE_GRAPHS = [
 export default function GraphVisualizationPage() {
   const [activeView, setActiveView] = useState<ActiveView>('browser');
   const [selectedGraph, setSelectedGraph] = useState<string>('gemini_graph');
-
-  // FalkorDB Browser URL - автоматичне підключення через REDIS_URL в docker-compose
-  const browserUrl = 'http://localhost:3001';
 
   return (
     <div 
@@ -134,101 +132,10 @@ export default function GraphVisualizationPage() {
             }}
           >
             {activeView === 'browser' ? (
-              <div className="h-full overflow-y-auto p-12">
-                <div className="max-w-2xl mx-auto space-y-6">
-                  {/* Header */}
-                  <div className="text-center">
-                    <div 
-                      className="w-24 h-24 rounded-full flex items-center justify-center mb-6 border-4 mx-auto"
-                      style={{ 
-                        backgroundColor: COLORS.gold,
-                        borderColor: COLORS.blue,
-                      }}
-                    >
-                      <Network className="w-12 h-12" style={{ color: COLORS.blue }} />
-                    </div>
-                    
-                    <h3 
-                      className="text-2xl font-bold mb-4"
-                      style={{ color: COLORS.darkBrown }}
-                    >
-                      FalkorDB Browser
-                    </h3>
-                    
-                    <p 
-                      className="text-base mb-6"
-                      style={{ color: COLORS.darkBrown, opacity: 0.7 }}
-                    >
-                      Візуалізація вузлів і зв'язків графа
-                    </p>
-                  </div>
-
-                  {/* Instructions */}
-                  <div 
-                    className="rounded-xl p-6 border-2"
-                    style={{
-                      backgroundColor: 'white',
-                      borderColor: COLORS.blue,
-                    }}
-                  >
-                    <h4 
-                      className="text-lg font-bold mb-4 flex items-center gap-2"
-                      style={{ color: COLORS.blue }}
-                    >
-                      <Sparkles className="w-5 h-5" />
-                      Інструкція підключення
-                    </h4>
-                    
-                    <ol className="space-y-3 text-sm" style={{ color: COLORS.darkBrown }}>
-                      <li className="flex gap-2">
-                        <span className="font-bold">1.</span>
-                        <span>Натисніть кнопку "Відкрити Browser" нижче</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="font-bold">2.</span>
-                        <span>Браузер відкриється і <strong>автоматично підключиться</strong> до бази</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="font-bold">3.</span>
-                        <span>Виберіть граф зі списку: <strong style={{ color: COLORS.blue }}>{selectedGraph}</strong></span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="font-bold">4.</span>
-                        <span>Почніть досліджувати вузли та зв'язки!</span>
-                      </li>
-                    </ol>
-                  </div>
-
-                  {/* Open Button */}
-                  <div className="text-center">
-                    <button
-                      onClick={() => window.open(browserUrl, '_blank', 'noopener,noreferrer')}
-                      className="px-8 py-4 rounded-xl font-bold text-lg border-3 transition-all hover:scale-105"
-                      style={{
-                        backgroundColor: COLORS.blue,
-                        color: 'white',
-                        border: `3px solid ${COLORS.gold}`,
-                      }}
-                    >
-                      🔍 Відкрити Browser
-                    </button>
-                  </div>
-
-                  {/* Technical Info */}
-                  <div 
-                    className="rounded-xl p-4 border"
-                    style={{
-                      backgroundColor: COLORS.gold,
-                      borderColor: COLORS.blue,
-                      opacity: 0.9,
-                    }}
-                  >
-                    <p className="text-xs text-center" style={{ color: COLORS.blue }}>
-                      📍 Підключення: localhost:6379 | 🔐 Автоматична аутентифікація | 📊 Граф: {selectedGraph}
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <SimpleGraphViewer 
+                graphName={selectedGraph} 
+                autoLoad={true}
+              />
             ) : (
               <GraphStats graphName={selectedGraph} />
             )}
