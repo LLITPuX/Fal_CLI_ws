@@ -83,6 +83,17 @@ class FalkorDBClient:
         if not self._connected or not self._client:
             raise DatabaseError("FalkorDB client is not connected")
 
+    def select_graph(self, graph_name: str) -> None:
+        """Switch to a different graph.
+        
+        Args:
+            graph_name: Name of the graph to switch to
+        """
+        self._ensure_connected()
+        self._graph_name = graph_name
+        self._graph = self._client.select_graph(graph_name)
+        logger.info(f"Switched to graph: {graph_name}")
+
     async def query(
         self, 
         cypher: str, 
