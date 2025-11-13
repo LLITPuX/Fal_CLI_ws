@@ -409,3 +409,4 @@ class CursorRepository:
         except Exception:
             return False
 
+
