@@ -85,6 +85,7 @@ export default function SimpleGraphViewer({ graphName, cypherQuery, autoLoad = t
         body: JSON.stringify({
           query: defaultQuery,
           params: {},
+          graph_name: graphName,
         }),
       });
 

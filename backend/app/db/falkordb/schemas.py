@@ -72,6 +72,7 @@ class QueryRequest(BaseModel):
 
     query: str = Field(..., min_length=1, max_length=5000, description="Cypher query")
     params: dict[str, Any] = Field(default_factory=dict, description="Query parameters")
+    graph_name: str | None = Field(None, description="Graph name to query (optional, defaults to current graph)")
 
     @field_validator("query")
     @classmethod

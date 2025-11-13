@@ -160,8 +160,13 @@ class FalkorDBService:
         Raises:
             ValidationError: If query execution fails
         """
+        # Switch graph if specified
+        original_graph = self._client._graph_name
+        if request.graph_name and request.graph_name != original_graph:
+            self._client.select_graph(request.graph_name)
+        
         try:
-            logger.info(f"Executing query: {request.query[:100]}...")
+            logger.info(f"Executing query on graph '{self._client._graph_name}': {request.query[:100]}...")
             
             results, execution_time = await self._client.query(
                 request.query, request.params
@@ -182,6 +187,10 @@ class FalkorDBService:
         except Exception as e:
             logger.error(f"Query execution failed: {e}", exc_info=True)
             raise ValidationError(f"Query execution failed: {str(e)}")
+        finally:
+            # Restore original graph if we switched
+            if request.graph_name and request.graph_name != original_graph:
+                self._client.select_graph(original_graph)
 
     async def get_graph_stats(self, graph_name: str | None = None) -> GraphStats:
         """Get graph statistics.
