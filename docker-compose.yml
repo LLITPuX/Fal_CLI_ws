@@ -20,6 +20,8 @@ services:
     volumes:
       - ${HOST_GEMINI_DIR}:/host_gemini:ro
       - ./backend/app:/app/app
+      - ./backend/scripts:/app/scripts:ro
+      - ./.cursor/rules:/app/.cursor/rules:ro
       - backend-data:/app/data
     networks:
       - gemini-network

@@ -1,0 +1,507 @@
+---
+description: Guide for loading .cursor/rules into Knowledge Base (one-time setup)
+alwaysApply: false
+---
+# KNOWLEDGE BASE LOADING GUIDE
+
+**Purpose:** Одноразове завантаження всіх правил з `.cursor/rules/` в граф `cursor_memory` для використання в Cursor Memory System.
+
+**Status:** ✅ Ready - Validation passed, 18 files prepared
+
+---
+
+## Overview
+
+Цей процес **виконується ОДИН РАЗ** при першій ініціалізації системи або після значних оновлень правил.
+
+### What Gets Loaded
+
+```
+.cursor/rules/
+├── agents/           → 10 файлів (agent patterns)
+├── architecture/     → 1 файл (system architecture)
+├── *.mdc            → 7 файлів (development, infrastructure, technical)
+└── Total: 18 files
+```
+
+### Target Graph Structure
+
+```cypher
+(:KnowledgeBase {
+  id: "cursor_rules_v3",
+  type: "rules",
+  version: "3.0.0"
+})
+  ↓ [:IN_BASE]
+(:Document {path, content, category, version})
+  ↓ [:PART_OF]
+(:Chunk {content, position, embedding})
+  ↓ [:MENTIONS]
+(:Entity {canonical_name, type})
+```
+
+---
+
+## Prerequisites
+
+### 1. Validation Status
+
+```bash
+# Check current status
+python backend/scripts/validate_rules.py
+```
+
+**Expected output:**
+- ✅ Issues: 0
+- ⚠️  Warnings: 4 (non-blocking)
+- Status: VALIDATION PASSED
+
+### 2. Required Files
+
+All files validated and ready:
+
+**Agent Patterns (10 files):**
+- `agents/_index.mdc` - Multi-agent system overview
+- `agents/clerk.mdc` - Clerk Agent patterns
+- `agents/cursor.mdc` - Cursor Agent patterns  
+- `agents/graph-management.mdc` - Multi-graph patterns
+- `agents/langgraph-patterns.mdc` - LangGraph workflows
+- `agents/orchestrator.mdc` - Orchestrator patterns
+- `agents/researcher.mdc` - Researcher patterns
+- `agents/subconscious.mdc` - Subconscious patterns
+
+**Architecture (1 file):**
+- `architecture/memory-system.mdc` - Comprehensive memory system architecture
+
+**Development (2 files):**
+- `backend.mdc` - Backend development standards
+- `frontend.mdc` - Frontend TypeScript standards
+
+**Infrastructure (2 files):**
+- `docker.mdc` - Docker and containerization
+- `windows.mdc` - Windows and PowerShell guidelines
+
+**Technical (2 files):**
+- `falkordb.mdc` - FalkorDB integration patterns
+- `templates.mdc` - Node Template System patterns
+
+**Quality (1 file):**
+- `testing.mdc` - Testing and debugging best practices
+
+**Documentation (1 file):**
+- `session-reports.mdc` - Session summary guidelines
+
+---
+
+## Validation Results
+
+### Files Manifest
+
+Generated: `backend/scripts/rules_manifest.json`
+
+```json
+{
+  "total_files": 18,
+  "categories": {
+    "agent_patterns": 8,
+    "architecture": 1,
+    "development": 2,
+    "infrastructure": 2,
+    "technical": 2,
+    "quality": 1,
+    "documentation": 1,
+    "general": 1
+  },
+  "total_size_kb": ~450,
+  "avg_lines_per_file": ~350
+}
+```
+
+### Warnings (Non-Blocking)
+
+1. **Version Warning:** `orchestrator.mdc` - Version 0.1.0 (pre-1.0)
+   - **Action:** Not critical, file is in planning phase
+   
+2. **Potential Conflicts:** 3 files mention both async and sync
+   - `architecture.mdc` - Shows both patterns for comparison
+   - `memory-system.mdc` - Discusses Hot Path (sync) vs Async Workers
+   - `cursor.mdc` - Mixed patterns in examples
+   - **Action:** These are educational examples, not conflicts
+
+---
+
+## Loading Process
+
+### Step 1: Prepare Environment
+
+```bash
+# Ensure FalkorDB is running
+docker-compose up -d falkordb
+
+# Check connection
+python -c "from falkordb import FalkorDB; print(FalkorDB(host='localhost').ping())"
+```
+
+### Step 2: Initialize Knowledge Base
+
+**Script:** `backend/scripts/init_knowledge_base.py` (to be created)
+
+```python
+async def initialize_knowledge_base():
+    """
+    Load all .cursor/rules/*.mdc files into cursor_memory graph.
+    
+    Process:
+    1. Create KnowledgeBase root node
+    2. For each .mdc file:
+       a. Create Document node
+       b. Chunk content (semantic, 800 chars)
+       c. Create Chunk nodes
+       d. Link: Chunk → Document → KnowledgeBase
+    3. Mark status: pending_vectorization
+    4. Async workers will process later
+    """
+    pass
+```
+
+**Execution time:** ~30-60 seconds для 18 файлів
+
+### Step 3: Verify Loading
+
+```python
+# Check nodes created
+cypher = """
+MATCH (kb:KnowledgeBase {id: 'cursor_rules_v3'})
+MATCH (kb)<-[:IN_BASE]-(d:Document)
+MATCH (d)<-[:PART_OF]-(c:Chunk)
+RETURN 
+  count(DISTINCT d) as documents,
+  count(DISTINCT c) as chunks
+"""
+
+# Expected:
+# documents: 18
+# chunks: ~900-1200 (залежить від chunk strategy)
+```
+
+---
+
+## Post-Loading: Async Processing
+
+Після завантаження, Async Workers автоматично обробляють:
+
+### Worker Pipeline
+
+```
+1. Real-time Vectorizer (0.1s interval)
+   → Векторизує chunks
+   → Status: pending_vectorization → vectorized
+   
+2. Entity Extractor (1s interval)
+   → Витягує entities з chunks
+   → Створює Entity nodes
+   → Створює MENTIONS relationships
+   
+3. Similarity Linker (2s interval)
+   → Шукає схожі chunks
+   → Створює SIMILAR_TO edges
+   
+4. Entity Deduplicator (30s interval)
+   → Об'єднує дублікатні entities
+   → Зберігає aliases
+```
+
+**Total processing time:** ~5-10 хвилин для повної обробки
+
+---
+
+## Verification Queries
+
+### Check Loading Status
+
+```cypher
+// Overall status
+MATCH (kb:KnowledgeBase {id: 'cursor_rules_v3'})
+MATCH (kb)<-[:IN_BASE]-(d:Document)
+MATCH (d)<-[:PART_OF]-(c:Chunk)
+RETURN 
+  kb.version as version,
+  count(DISTINCT d) as total_documents,
+  count(DISTINCT c) as total_chunks,
+  count(DISTINCT CASE WHEN c.status = 'vectorized' THEN c END) as vectorized_chunks,
+  count(DISTINCT CASE WHEN c.status = 'pending_vectorization' THEN c END) as pending_chunks
+```
+
+### Check Entity Extraction
+
+```cypher
+// Entities extracted from rules
+MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
+RETURN 
+  e.type as entity_type,
+  count(DISTINCT e) as unique_entities,
+  sum(e.mention_count) as total_mentions
+ORDER BY total_mentions DESC
+```
+
+### Check Similarity Links
+
+```cypher
+// Semantic connections
+MATCH (c1:Chunk)-[s:SIMILAR_TO]->(c2:Chunk)
+RETURN 
+  avg(s.similarity) as avg_similarity,
+  count(s) as total_similarity_edges
+```
+
+---
+
+## Updating Rules (Future)
+
+Коли додаються нові `.mdc` файли або оновлюються існуючі:
+
+### Option 1: Incremental Update
+
+```python
+async def update_rule_file(file_path: str):
+    """
+    Update single file in Knowledge Base.
+    
+    Process:
+    1. Check if Document exists (by path)
+    2. If exists:
+       - Mark old chunks as invalid (invalid_at = now)
+       - Create new chunks
+    3. If new:
+       - Create Document + Chunks
+    4. Trigger async processing
+    """
+    pass
+```
+
+### Option 2: Full Reload
+
+```bash
+# Backup current state
+python backend/scripts/backup_knowledge_base.py
+
+# Clear and reload
+python backend/scripts/init_knowledge_base.py --force-reload
+```
+
+---
+
+## Troubleshooting
+
+### Issue: Validation Fails
+
+**Symptoms:** `validate_rules.py` shows blocking issues
+
+**Solutions:**
+1. Check broken links → Fix in source files
+2. Check empty files → Remove or fill content
+3. Re-run validation
+
+### Issue: Loading Takes Too Long
+
+**Symptoms:** Script runs >2 minutes
+
+**Possible causes:**
+- FalkorDB connection slow
+- Too many chunks per file
+
+**Solutions:**
+- Check FalkorDB health
+- Increase chunk size (800 → 1000 chars)
+- Process in batches
+
+### Issue: Workers Not Processing
+
+**Symptoms:** Chunks stay in `pending_vectorization` status
+
+**Solutions:**
+1. Check workers are running:
+   ```bash
+   curl http://localhost:8000/api/cursor/workers/health
+   ```
+
+2. Check OpenAI API key:
+   ```bash
+   echo $OPENAI_API_KEY
+   ```
+
+3. Restart workers:
+   ```bash
+   docker-compose restart cursor-workers
+   ```
+
+### Issue: Entities Not Extracted
+
+**Symptoms:** No `:Entity` nodes created
+
+**Solutions:**
+1. Check Entity Extractor worker logs
+2. Verify OpenAI API quota
+3. Check if files actually mention entities:
+   ```cypher
+   MATCH (c:Chunk)
+   WHERE c.content CONTAINS 'Docker'
+      OR c.content CONTAINS 'Python'
+      OR c.content CONTAINS 'FalkorDB'
+   RETURN count(c)
+   ```
+
+---
+
+## Monitoring Dashboard
+
+### Key Metrics to Track
+
+```python
+# Knowledge Base Health
+kb_metrics = {
+    "total_documents": 18,
+    "total_chunks": 1200,
+    "vectorized_chunks": 1200,
+    "total_entities": 150,
+    "similarity_edges": 5000,
+    "avg_chunk_size": 650,
+    "processing_complete": True
+}
+```
+
+### Health Check Endpoint
+
+```bash
+# Check Knowledge Base status
+curl http://localhost:8000/api/cursor/knowledge-base/health
+
+# Expected response:
+{
+  "status": "healthy",
+  "documents_loaded": 18,
+  "chunks_vectorized": 1200,
+  "entities_extracted": 150,
+  "last_updated": "2025-11-13T16:30:00Z"
+}
+```
+
+---
+
+## Next Steps After Loading
+
+### 1. Test Context Retrieval
+
+```bash
+# Test query that should match rules
+curl -X POST http://localhost:8000/api/cursor/test-context \
+  -d '{"query": "How does Clerk Agent work?"}'
+
+# Should return:
+# - Relevant chunks from clerk.mdc
+# - Related entities (Clerk, Agent, Message)
+# - Similar queries from past
+```
+
+### 2. Enable Hot Path
+
+Once Knowledge Base is loaded and processed:
+
+```python
+# In config
+CURSOR_KNOWLEDGE_BASE_READY = True
+CURSOR_HOT_PATH_ENABLED = True
+```
+
+### 3. Monitor Usage
+
+Track which rules are most accessed:
+
+```cypher
+// Most referenced documents
+MATCH (d:Document)<-[:PART_OF]-(c:Chunk)
+WHERE EXISTS((c)-[:SIMILAR_TO]->())
+   OR EXISTS((c)-[:MENTIONED_IN_QUERY]->())
+RETURN 
+  d.path as document,
+  d.category as category,
+  count(c) as reference_count
+ORDER BY reference_count DESC
+LIMIT 10
+```
+
+---
+
+## Rollback Procedure
+
+If loading goes wrong:
+
+### 1. Backup Current State
+
+```bash
+# Before loading
+python backend/scripts/backup_knowledge_base.py \
+  --output backups/kb-before-load.cypher
+```
+
+### 2. Clear Knowledge Base
+
+```cypher
+// Remove all Knowledge Base nodes
+MATCH (kb:KnowledgeBase {id: 'cursor_rules_v3'})
+OPTIONAL MATCH (kb)<-[:IN_BASE]-(d:Document)
+OPTIONAL MATCH (d)<-[:PART_OF]-(c:Chunk)
+OPTIONAL MATCH (c)-[:MENTIONS]->(e:Entity)
+DETACH DELETE kb, d, c, e
+```
+
+### 3. Restore from Backup
+
+```bash
+python backend/scripts/restore_knowledge_base.py \
+  --input backups/kb-before-load.cypher
+```
+
+---
+
+## Success Criteria
+
+✅ **Loading Complete When:**
+
+1. All 18 documents created in graph
+2. ~1000-1200 chunks created
+3. All chunks vectorized (status = 'vectorized')
+4. ~100-200 entities extracted
+5. ~3000-8000 similarity edges created
+6. No errors in worker logs
+7. Health check returns "healthy"
+8. Test query returns relevant context
+
+---
+
+## Summary
+
+**What was done:**
+- ✅ Validated 18 .mdc files
+- ✅ Generated manifest
+- ✅ Fixed broken links (agent-ecosystem.mdc removed)
+- ✅ Ready for loading
+
+**What's next:**
+- Create `init_knowledge_base.py` script
+- Run loading process
+- Wait for async workers to complete
+- Verify with test queries
+- Enable Hot Path
+
+**Timeline:**
+- Loading: 30-60 seconds
+- Async processing: 5-10 minutes
+- Total: ~15 minutes до повної готовності
+
+---
+
+**Version:** 1.0.0  
+**Created:** November 13, 2025  
+**Status:** Ready for Execution  
+**Prerequisites:** ✅ Validation Passed (0 blocking issues)

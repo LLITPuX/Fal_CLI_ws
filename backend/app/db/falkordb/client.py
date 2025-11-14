@@ -178,9 +178,22 @@ class FalkorDBClient:
         
         # Handle Node objects
         if hasattr(value, 'properties'):
+            # FalkorDB nodes can have labels as list or single value
+            label = getattr(value, 'label', None)
+            if isinstance(label, (list, tuple)) and len(label) > 0:
+                label = label[0]  # Use first label
+            elif label is None:
+                # Try to get labels from node if available
+                labels = getattr(value, 'labels', None)
+                if isinstance(labels, (list, tuple)) and len(labels) > 0:
+                    label = labels[0]
+                else:
+                    label = 'Node'
+            
             return {
                 'id': getattr(value, 'id', None),
-                'label': getattr(value, 'label', None),
+                'label': label,
+                'labels': getattr(value, 'labels', [label]) if hasattr(value, 'labels') else [label],
                 'properties': dict(value.properties) if value.properties else {}
             }
         

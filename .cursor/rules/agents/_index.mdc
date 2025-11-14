@@ -129,8 +129,7 @@ backend/app/services/
 ### Rules Files
 
 **Ecosystem & Architecture:**
-- **[agent-ecosystem.mdc](agent-ecosystem.mdc)** - Multi-Graph Architecture overview
-- **[graph-management.mdc](graph-management.mdc)** - Managing multiple graphs
+- **[graph-management.mdc](graph-management.mdc)** - Multi-Graph Architecture and management patterns
 
 **Chat Pipeline (cybersich_chat graph):**
 - **[langgraph-patterns.mdc](langgraph-patterns.mdc)** - Загальні LangGraph patterns
@@ -437,8 +436,7 @@ logger.info("🎯 Оркестратор: Приймаю рішення...")
 ## Quick Reference
 
 **Ecosystem & Architecture:**
-- `agents/agent-ecosystem.mdc` - Multi-Graph Architecture overview
-- `agents/graph-management.mdc` - Managing multiple graphs
+- `agents/graph-management.mdc` - Multi-Graph Architecture and management patterns
 
 **Chat Agents:**
 - `agents/clerk.mdc` - Писарь Agent (Phase 1)

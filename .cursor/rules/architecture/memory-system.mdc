@@ -1,0 +1,2458 @@
+---
+description: Cursor Memory System - Comprehensive architecture for temporal knowledge graph with async processing
+alwaysApply: false
+---
+# CURSOR MEMORY SYSTEM ARCHITECTURE
+
+**Version:** 3.0.0  
+**Created:** November 13, 2025  
+**Status:** 🏗️ Design Phase - Ready for Implementation  
+
+---
+
+## Executive Summary
+
+Cursor Memory System - це інтелектуальна система пам'яті, яка трансформує кожну взаємодію developer↔AI в структурований temporal knowledge graph. На відміну від традиційних session-based підходів, система реалізує концепцію **"один чат = один запрос"** з повністю свіжим контекстним вікном та асинхронною обробкою для нульового overhead.
+
+### Core Principles
+
+1. **Zero-Latency User Experience** - відповідь надається до завершення векторизації
+2. **Temporal Knowledge Graph** - безмежна пам'ять без session boundaries
+3. **Async-First Processing** - background workers обробляють після відповіді
+4. **Code-Aware Memory** - повна інтеграція з git та codebase evolution
+5. **Entity-Centric Context** - швидкий пошук через pre-extracted entities
+
+---
+
+## Table of Contents
+
+1. [Concept: One Chat = One Query](#concept-one-chat-one-query)
+2. [Hot Path: Synchronous Response Pipeline](#hot-path-synchronous-response-pipeline)
+3. [Base Knowledge Initialization](#base-knowledge-initialization)
+4. [Async Workers Ecosystem](#async-workers-ecosystem)
+5. [Enhanced Graph Schema](#enhanced-graph-schema)
+6. [Entity Deduplication Strategy](#entity-deduplication-strategy)
+7. [Code Evolution Tracking](#code-evolution-tracking)
+8. [Response Storage Strategy](#response-storage-strategy)
+9. [Performance Targets & SLA](#performance-targets--sla)
+10. [Implementation Phase Plan](#implementation-phase-plan)
+
+---
+
+## Concept: One Chat = One Query
+
+### Problem with Traditional Sessions
+
+**Традиційний підхід:**
+```
+Session 1: [Query1 → Response1 → Query2 → Response2 → ... → Query50]
+                        ↑
+                Контекст зростає, токени витрачаються,
+                історія захаращує, важко знайти релевантне
+```
+
+**Наш підхід:**
+```
+Chat 1: Query1 → [Fresh Context from Graph] → Response1
+Chat 2: Query2 → [Fresh Context from Graph] → Response2
+Chat 3: Query3 → [Fresh Context from Graph] → Response3
+          ↑
+    Кожен запит отримує тільки релевантний контекст
+    з безмежної temporal пам'яті
+```
+
+### Benefits
+
+✅ **Чисте контекстне вікно** - кожен запит починається з чистого аркуша  
+✅ **Релевантний контекст** - тільки те що потрібно зараз  
+✅ **Економія токенів** - не передаємо всю історію  
+✅ **Temporal awareness** - "Пам'ятаєш 3 місяці тому ми обговорювали X?"  
+✅ **Cross-session knowledge** - зв'язки між різними "чатами"  
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  User Query: "Як ми реалізували Clerk Agent?"              │
+└────────────────┬────────────────────────────────────────────┘
+                 │
+                 ▼
+    ┌────────────────────────────┐
+    │  Quick Entity Match        │  ← 10-20ms
+    │  "Clerk", "Agent"          │
+    └────────────┬───────────────┘
+                 │
+                 ▼
+    ┌────────────────────────────┐
+    │  Graph Context Retrieval   │  ← 30-50ms
+    │  - Previous queries about  │
+    │    Clerk Agent             │
+    │  - Related code files      │
+    │  - Architectural decisions │
+    └────────────┬───────────────┘
+                 │
+                 ▼
+    ┌────────────────────────────┐
+    │  Generate Response         │  ← 2-3s (Gemini)
+    │  with fresh context        │
+    └────────────┬───────────────┘
+                 │
+                 ▼
+    ┌────────────────────────────┐
+    │  Background Processing     │  ← Async (user doesn't wait)
+    │  - Vectorize query         │
+    │  - Extract entities        │
+    │  - Link similar chunks     │
+    └────────────────────────────┘
+```
+
+---
+
+## Hot Path: Synchronous Response Pipeline
+
+### Goal: <100ms Overhead Before Response
+
+**Pipeline Steps:**
+
+```python
+# 1. Record incoming query (15ms)
+query_id = await cursor_repo.create_user_query(
+    content=user_query,
+    timestamp=datetime.now(),
+    status="pending_analysis"  # Позначка для workers
+)
+
+# 2. Quick entity match (30ms) - NO VECTORS!
+matched_entities = await entity_matcher.find_entities_in_text(
+    text=user_query,
+    method="substring_match"  # Просто WHERE text CONTAINS entity.name
+)
+
+# 3. Link query to entities (10ms)
+for entity in matched_entities:
+    await cursor_repo.create_mention_edge(query_id, entity.id)
+    await cursor_repo.increment_entity_mention_count(entity.id)
+
+# 4. Build context from entities (40ms)
+context = await context_builder.build_from_entities(
+    query_id=query_id,
+    entities=matched_entities,
+    include_recent=10,  # Останні 10 messages
+    include_related_queries=5,  # Top 5 пов'язаних через entities
+    include_code_context=True  # Якщо entities мають code references
+)
+
+# 5. Generate response with context (2-3s Gemini)
+response = await orchestrator.generate_response(
+    query=user_query,
+    context=context
+)
+
+# 6. Save response (20ms)
+response_id = await cursor_repo.create_assistant_response(
+    content=response,
+    query_id=query_id,
+    status="pending_summarization"  # Для summarizer worker
+)
+
+# TOTAL OVERHEAD: ~115ms (acceptable!)
+# User gets response in ~2.1-3.1s (Gemini time + overhead)
+```
+
+### Critical: What We DON'T Do in Hot Path
+
+❌ **NO OpenAI Embeddings** (200-400ms)  
+❌ **NO Entity Extraction via LLM** (300-500ms)  
+❌ **NO Similarity Search** (може бути повільно на великій БД)  
+❌ **NO Code Parsing** (може займати секунди)  
+❌ **NO Git Operations** (I/O intensive)  
+
+### Context Building Strategy (Without Vectors)
+
+```cypher
+// Cypher query для швидкого контексту
+MATCH (current:UserQuery {id: $query_id})-[:MENTIONS]->(e:Entity)
+MATCH (prev:UserQuery)-[:MENTIONS]->(e)
+WHERE prev.timestamp < current.timestamp
+MATCH (prev)<-[:ANSWERS]-(resp:AssistantResponse)
+
+// Опціонально: включити code context
+OPTIONAL MATCH (e)<-[:MENTIONS]-(code:Function)
+OPTIONAL MATCH (code)-[:IN_FILE]->(file:CodeFile)
+
+RETURN 
+  prev,
+  resp,
+  e,
+  code,
+  file
+ORDER BY prev.timestamp DESC
+LIMIT 10
+```
+
+**Execution time:** ~30-50ms (FalkorDB optimized)
+
+---
+
+## Base Knowledge Initialization
+
+### Problem: Cold Start
+
+При першому запуску система не має entities, тому Quick Entity Match нічого не знайде.
+
+### Solution: Pre-load Knowledge Base
+
+**Що завантажуємо:**
+1. `.cursor/rules/**/*.mdc` - правила та архітектурні документи
+2. `backend/**/*.py` - існуючий код проекту
+3. `docs/**/*.md` - документація
+4. `README.md`, `ARCHITECTURE.md` - ключові документи
+
+### Initialization Pipeline
+
+```python
+async def initialize_knowledge_base():
+    """
+    Завантажити base knowledge при старті системи.
+    
+    Виконується ОДИН РАЗ або після git pull з великими змінами.
+    """
+    logger.info("🧠 Initializing Cursor Knowledge Base...")
+    
+    # 1. Load rules
+    await load_rules_documents()
+    
+    # 2. Parse codebase
+    await parse_and_index_codebase()
+    
+    # 3. Load documentation
+    await load_documentation()
+    
+    # 4. Extract entities from all
+    await extract_base_entities()
+    
+    # 5. Vectorize everything (background)
+    await trigger_vectorization_workers()
+    
+    logger.info("✅ Knowledge Base initialized")
+
+
+async def load_rules_documents():
+    """Load and chunk .mdc files."""
+    rules_files = glob.glob(".cursor/rules/**/*.mdc", recursive=True)
+    
+    for file_path in rules_files:
+        # Read content
+        content = Path(file_path).read_text(encoding="utf-8")
+        
+        # Create Document node
+        doc_id = await kb_repo.create_document(
+            path=file_path,
+            content=content,
+            type="rules",
+            content_hash=hashlib.sha256(content.encode()).hexdigest()
+        )
+        
+        # Semantic chunking
+        chunks = await text_processor.split(content, max_chunk_size=800)
+        
+        # Save chunks
+        for chunk in chunks:
+            chunk_id = await kb_repo.create_chunk(
+                content=chunk.content,
+                document_id=doc_id,
+                position=chunk.position,
+                chunk_type=chunk.chunk_type,
+                status="pending_vectorization"
+            )
+        
+        logger.info(f"📄 Loaded: {file_path} ({len(chunks)} chunks)")
+
+
+async def parse_and_index_codebase():
+    """Parse Python codebase into structured nodes."""
+    python_files = glob.glob("backend/**/*.py", recursive=True)
+    
+    for file_path in python_files:
+        # Read and parse
+        content = Path(file_path).read_text(encoding="utf-8")
+        tree = ast.parse(content)
+        
+        # Create CodeFile node
+        file_id = await kb_repo.create_code_file(
+            path=file_path,
+            language="python",
+            lines_count=len(content.splitlines()),
+            content_hash=hashlib.sha256(content.encode()).hexdigest(),
+            valid_at=datetime.now()
+        )
+        
+        # Extract functions
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                # Get function source
+                func_source = ast.get_source_segment(content, node)
+                
+                # Create Function node
+                await kb_repo.create_function(
+                    name=node.name,
+                    signature=f"def {node.name}(...)",
+                    source_code=func_source,
+                    start_line=node.lineno,
+                    end_line=node.end_lineno,
+                    file_id=file_id,
+                    status="pending_vectorization"
+                )
+        
+        logger.info(f"🐍 Parsed: {file_path}")
+
+
+async def extract_base_entities():
+    """
+    Extract entities з усього base knowledge.
+    
+    Використовує OpenAI в batch mode (це одноразова операція).
+    """
+    # Get all documents and code
+    all_content = await kb_repo.get_all_content_for_entity_extraction()
+    
+    # Batch extraction (groups по 10)
+    for batch in chunk_list(all_content, size=10):
+        texts = [item.content for item in batch]
+        
+        # OpenAI batch entity extraction
+        entities_batch = await entity_extractor.extract_batch(texts)
+        
+        # Save entities
+        for item, entities in zip(batch, entities_batch):
+            for entity in entities:
+                # Find or create entity
+                entity_id = await kb_repo.find_or_create_entity(
+                    name=entity.name,
+                    canonical_name=normalize_entity(entity.name, entity.type),
+                    type=entity.type,
+                    confidence=entity.confidence
+                )
+                
+                # Link entity to source
+                await kb_repo.create_mention_edge(
+                    source_id=item.id,
+                    entity_id=entity_id,
+                    context=entity.context
+                )
+    
+    logger.info("🏷️ Base entities extracted")
+```
+
+### Knowledge Base Graph Structure
+
+```cypher
+(:KnowledgeBase {
+  id: "cursor_kb_v1",
+  version: "1.0.0",
+  initialized_at: "2025-11-13T10:00:00Z",
+  total_documents: 50,
+  total_chunks: 2500,
+  total_entities: 350
+})
+
+(:Document {
+  id: "uuid",
+  path: ".cursor/rules/agents/clerk.mdc",
+  type: "rules",
+  content: "full text...",
+  content_hash: "sha256...",
+  loaded_at: "ISO8601",
+  chunk_count: 15
+})-[:IN_BASE]->(:KnowledgeBase)
+
+(:Chunk {
+  id: "uuid",
+  content: "chunk text...",
+  position: 0,
+  chunk_type: "paragraph",
+  embedding: [...],  // Додається worker'ом
+  status: "vectorized"
+})-[:PART_OF {position: 0}]->(:Document)
+
+(:Entity {
+  id: "uuid",
+  name: "Clerk Agent",
+  canonical_name: "clerk_agent",
+  type: "CONCEPT",
+  aliases: ["Clerk", "clerk", "Писарь"],
+  mention_count: 25,
+  first_seen: "ISO8601",
+  last_seen: "ISO8601"
+})
+
+(:Chunk)-[:MENTIONS {
+  position: 123,
+  context: "surrounding text"
+}]->(:Entity)
+```
+
+---
+
+## Async Workers Ecosystem
+
+### Overview: 6 Specialized Workers
+
+| Worker | Priority | Frequency | Purpose |
+|--------|----------|-----------|---------|
+| Real-time Vectorizer | HIGHEST | 0.1s | Векторизує нові запити негайно |
+| Entity Extractor | HIGH | 1s | Витягує entities з нових queries |
+| Similarity Linker | MEDIUM | 2s | Створює SIMILAR_TO edges |
+| Response Summarizer | MEDIUM | 5s | Summarizes довгі відповіді |
+| Entity Deduplicator | LOW | 30s | Об'єднує дублікатні entities |
+| Git Change Watcher | LOW | 60s | Відстежує зміни в git |
+
+### Worker 1: Real-time Vectorizer
+
+**Goal:** Векторизувати новий запит ДО того як його знадобиться для similarity search
+
+```python
+# backend/app/agents/cursor/workers/vectorizer.py
+
+import asyncio
+from openai import AsyncOpenAI
+from app.agents.cursor.repository import CursorRepository
+
+class RealtimeVectorizer:
+    """
+    Найвищий пріоритет - векторизує нові запити негайно.
+    """
+    
+    def __init__(self, repository: CursorRepository, openai_client: AsyncOpenAI):
+        self.repo = repository
+        self.client = openai_client
+        self.model = "text-embedding-3-small"
+    
+    async def run(self):
+        """Безкінечний loop - перевіряє кожні 100ms."""
+        logger.info("🚀 Real-time Vectorizer started")
+        
+        while True:
+            try:
+                # Знайти UserQuery.status = "pending_vectorization"
+                pending = await self.repo.get_pending_vectorization(limit=1)
+                
+                if pending:
+                    query = pending[0]
+                    logger.info(f"⚡ Vectorizing query {query.id[:8]}...")
+                    
+                    # Generate embedding
+                    response = await self.client.embeddings.create(
+                        model=self.model,
+                        input=[query.content]
+                    )
+                    
+                    embedding = response.data[0].embedding
+                    
+                    # Save to DB
+                    await self.repo.update_query_embedding(
+                        query_id=query.id,
+                        embedding=embedding,
+                        status="vectorized"
+                    )
+                    
+                    logger.info(f"✅ Query {query.id[:8]} vectorized")
+                
+                # Check every 100ms (дуже часто!)
+                await asyncio.sleep(0.1)
+                
+            except Exception as e:
+                logger.error(f"❌ Vectorizer error: {e}", exc_info=True)
+                await asyncio.sleep(1)  # Retry after 1s on error
+```
+
+**Why so fast?** Цей worker має забезпечити що до моменту коли Similarity Linker почне працювати, embedding вже готовий.
+
+### Worker 2: Entity Extractor
+
+**Goal:** Витягти entities з нових queries використовуючи OpenAI structured output
+
+```python
+# backend/app/agents/cursor/workers/entity_extractor.py
+
+class EntityExtractor:
+    """
+    Витягує named entities з нових UserQuery та AssistantResponse.
+    """
+    
+    def __init__(self, repository: CursorRepository, openai_client: AsyncOpenAI):
+        self.repo = repository
+        self.client = openai_client
+        self.model = "gpt-4o-mini"
+    
+    async def run(self):
+        """Check кожну секунду."""
+        logger.info("🏷️ Entity Extractor started")
+        
+        while True:
+            try:
+                # Знайти queries without entities
+                pending = await self.repo.get_queries_without_entities(limit=3)
+                
+                for query in pending:
+                    logger.info(f"🔍 Extracting entities from {query.id[:8]}...")
+                    
+                    # Extract entities via OpenAI
+                    entities = await self._extract_entities(query.content)
+                    
+                    logger.info(f"Found {len(entities)} entities")
+                    
+                    # Process each entity
+                    for entity in entities:
+                        # Normalize name
+                        canonical = normalize_entity(entity.name, entity.type)
+                        
+                        # Find similar existing entities (fuzzy match)
+                        similar = await self._find_similar_entity(
+                            canonical,
+                            entity.type
+                        )
+                        
+                        if similar and similar.similarity > 0.9:
+                            # Link to existing entity
+                            entity_id = similar.entity.id
+                            logger.info(
+                                f"  → Linked to existing: {similar.entity.name}"
+                            )
+                        else:
+                            # Create new entity
+                            entity_id = await self.repo.create_entity(
+                                name=entity.name,
+                                canonical_name=canonical,
+                                type=entity.type,
+                                confidence=entity.confidence,
+                                first_seen=query.timestamp,
+                                last_seen=query.timestamp
+                            )
+                            logger.info(f"  → Created new: {entity.name}")
+                        
+                        # Create MENTIONS relationship
+                        await self.repo.create_mention_edge(
+                            source_id=query.id,
+                            entity_id=entity_id,
+                            position=entity.position,
+                            context=entity.context,
+                            confidence=entity.confidence
+                        )
+                    
+                    # Mark as processed
+                    await self.repo.mark_query_entities_extracted(query.id)
+                
+                await asyncio.sleep(1)  # Check every second
+                
+            except Exception as e:
+                logger.error(f"❌ Entity Extractor error: {e}", exc_info=True)
+                await asyncio.sleep(5)
+    
+    async def _extract_entities(self, text: str) -> list[ExtractedEntity]:
+        """Extract entities using OpenAI structured output."""
+        prompt = f"""Extract all named entities from the following text.
+
+Categories:
+- PERSON: People, characters, usernames
+- ORG: Organizations, companies, teams
+- LOCATION: Countries, cities, places
+- TECH: Technologies, programming languages, frameworks, libraries
+- CONCEPT: Abstract concepts, methodologies, patterns
+- EVENT: Events, conferences, meetings
+- COMPONENT: System components, services, modules
+
+Text:
+{text}
+
+Return JSON with entities array. Each entity:
+- name: exact text from input
+- type: category from above
+- confidence: 0.0-1.0
+- context: 20 chars before and after
+- position: character position in text
+"""
+        
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.0
+        )
+        
+        result = EntityExtractionResult.model_validate_json(
+            response.choices[0].message.content
+        )
+        
+        return result.entities
+    
+    async def _find_similar_entity(
+        self,
+        canonical_name: str,
+        entity_type: str
+    ) -> SimilarEntity | None:
+        """
+        Знайти схожу entity в БД (fuzzy matching).
+        
+        Uses Levenshtein distance or simple substring match.
+        """
+        cypher = """
+        MATCH (e:Entity {type: $type})
+        WHERE e.canonical_name = $canonical
+           OR $canonical IN e.aliases
+           OR e.canonical_name CONTAINS $canonical
+           OR $canonical CONTAINS e.canonical_name
+        RETURN e, 
+               CASE 
+                 WHEN e.canonical_name = $canonical THEN 1.0
+                 WHEN $canonical IN e.aliases THEN 0.95
+                 ELSE 0.8
+               END as similarity
+        ORDER BY similarity DESC, e.mention_count DESC
+        LIMIT 1
+        """
+        
+        result = await self.repo.query(cypher, {
+            "canonical": canonical_name,
+            "type": entity_type
+        })
+        
+        if result:
+            return SimilarEntity(
+                entity=Entity(**result[0]["e"]),
+                similarity=result[0]["similarity"]
+            )
+        
+        return None
+```
+
+### Worker 3: Similarity Linker
+
+**Goal:** Створити SIMILAR_TO edges між chunks/queries по embeddings
+
+```python
+# backend/app/agents/cursor/workers/similarity_linker.py
+
+class SimilarityLinker:
+    """
+    Створює семантичні зв'язки між nodes через cosine similarity.
+    """
+    
+    def __init__(self, repository: CursorRepository):
+        self.repo = repository
+        self.threshold = 0.7  # Minimum similarity
+    
+    async def run(self):
+        """Check кожні 2 секунди."""
+        logger.info("🔗 Similarity Linker started")
+        
+        while True:
+            try:
+                # Знайти nodes з embeddings але без similarity check
+                pending = await self.repo.get_nodes_without_similarity_check(
+                    limit=10
+                )
+                
+                for node in pending:
+                    logger.info(f"🔍 Finding similar nodes for {node.id[:8]}...")
+                    
+                    # Cosine similarity search
+                    similar = await self._find_similar_nodes(
+                        embedding=node.embedding,
+                        exclude_id=node.id,
+                        top_k=10
+                    )
+                    
+                    logger.info(f"Found {len(similar)} similar nodes")
+                    
+                    # Create edges
+                    for sim in similar:
+                        await self.repo.create_similarity_edge(
+                            from_id=node.id,
+                            to_id=sim.node_id,
+                            similarity=sim.score,
+                            algorithm="cosine"
+                        )
+                    
+                    # Mark as checked
+                    await self.repo.mark_similarity_checked(node.id)
+                
+                await asyncio.sleep(2)  # Every 2 seconds
+                
+            except Exception as e:
+                logger.error(f"❌ Similarity Linker error: {e}", exc_info=True)
+                await asyncio.sleep(5)
+    
+    async def _find_similar_nodes(
+        self,
+        embedding: list[float],
+        exclude_id: str,
+        top_k: int = 10
+    ) -> list[SimilarNode]:
+        """
+        Find similar nodes using cosine similarity.
+        
+        Strategy:
+        1. Get all vectorized nodes from DB
+        2. Calculate cosine similarity in-memory (NumPy)
+        3. Filter by threshold and return top-K
+        
+        NOTE: Для >100K nodes треба Redis Stack VSS або Qdrant.
+        """
+        # Get all nodes with embeddings
+        all_nodes = await self.repo.get_all_nodes_with_embeddings(
+            exclude_id=exclude_id
+        )
+        
+        if not all_nodes:
+            return []
+        
+        # NumPy similarity
+        import numpy as np
+        from sklearn.metrics.pairwise import cosine_similarity
+        
+        query_emb = np.array([embedding])
+        node_embs = np.array([n.embedding for n in all_nodes])
+        
+        similarities = cosine_similarity(query_emb, node_embs)[0]
+        
+        # Filter by threshold
+        mask = similarities > self.threshold
+        filtered_indices = np.where(mask)[0]
+        filtered_sims = similarities[mask]
+        
+        # Sort and get top-K
+        top_indices = filtered_sims.argsort()[-top_k:][::-1]
+        
+        results = []
+        for idx in top_indices:
+            node_idx = filtered_indices[idx]
+            results.append(SimilarNode(
+                node_id=all_nodes[node_idx].id,
+                score=float(filtered_sims[idx])
+            ))
+        
+        return results
+```
+
+### Worker 4: Response Summarizer
+
+**Goal:** Створити summaries для довгих відповідей та зберегти повний текст у файлах
+
+```python
+# backend/app/agents/cursor/workers/response_summarizer.py
+
+class ResponseSummarizer:
+    """
+    Створює summaries для AssistantResponse >1000 chars.
+    """
+    
+    def __init__(
+        self,
+        repository: CursorRepository,
+        openai_client: AsyncOpenAI,
+        storage_path: Path
+    ):
+        self.repo = repository
+        self.client = openai_client
+        self.storage_path = storage_path
+        self.model = "gpt-4o-mini"
+    
+    async def run(self):
+        """Check кожні 5 секунд."""
+        logger.info("📝 Response Summarizer started")
+        
+        while True:
+            try:
+                # Responses without summary
+                pending = await self.repo.get_responses_without_summary(limit=5)
+                
+                for response in pending:
+                    if response.content_length > 1000:
+                        logger.info(
+                            f"📄 Summarizing response {response.id[:8]} "
+                            f"({response.content_length} chars)..."
+                        )
+                        
+                        # Save full content to file
+                        file_path = await self._save_to_file(response)
+                        
+                        # Generate summary via OpenAI
+                        summary = await self._generate_summary(response.content)
+                        
+                        # Vectorize summary
+                        embedding = await self._vectorize(summary)
+                        
+                        # Update in graph
+                        await self.repo.update_response_summary(
+                            response_id=response.id,
+                            summary=summary,
+                            summary_embedding=embedding,
+                            full_content_ref=str(file_path)
+                        )
+                        
+                        logger.info(f"✅ Summary created ({len(summary)} chars)")
+                    else:
+                        # Short response - just vectorize as-is
+                        embedding = await self._vectorize(response.content)
+                        await self.repo.update_response_embedding(
+                            response_id=response.id,
+                            embedding=embedding
+                        )
+                
+                await asyncio.sleep(5)
+                
+            except Exception as e:
+                logger.error(f"❌ Summarizer error: {e}", exc_info=True)
+                await asyncio.sleep(10)
+    
+    async def _save_to_file(self, response: AssistantResponse) -> Path:
+        """Save full response content to file."""
+        # Create directory structure: responses/YYYY/MM/DD/
+        date_path = self.storage_path / datetime.now().strftime("%Y/%m/%d")
+        date_path.mkdir(parents=True, exist_ok=True)
+        
+        # File: response_id.md
+        file_path = date_path / f"{response.id}.md"
+        
+        # Write content
+        file_path.write_text(response.content, encoding="utf-8")
+        
+        logger.info(f"💾 Saved to: {file_path}")
+        return file_path
+    
+    async def _generate_summary(self, content: str) -> str:
+        """Generate summary using OpenAI."""
+        prompt = f"""Create a concise summary of this AI assistant response.
+        
+Requirements:
+- Maximum 500 characters
+- Capture key points and actions taken
+- Include mentioned technologies/concepts
+- Preserve important code references
+
+Response:
+{content[:3000]}  # Limit input to save tokens
+
+Summary:"""
+        
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.3
+        )
+        
+        summary = response.choices[0].message.content.strip()
+        
+        # Ensure it's not too long
+        if len(summary) > 500:
+            summary = summary[:497] + "..."
+        
+        return summary
+    
+    async def _vectorize(self, text: str) -> list[float]:
+        """Generate embedding for text."""
+        response = await self.client.embeddings.create(
+            model="text-embedding-3-small",
+            input=[text]
+        )
+        
+        return response.data[0].embedding
+```
+
+### Worker 5: Entity Deduplicator
+
+**Goal:** Знайти та об'єднати дублікатні entities
+
+```python
+# backend/app/agents/cursor/workers/entity_deduplicator.py
+
+class EntityDeduplicator:
+    """
+    Об'єднує дублікатні entities (низький пріоритет).
+    """
+    
+    def __init__(self, repository: CursorRepository):
+        self.repo = repository
+    
+    async def run(self):
+        """Check кожні 30 секунд (рідко)."""
+        logger.info("🔄 Entity Deduplicator started")
+        
+        while True:
+            try:
+                # Find duplicate groups
+                duplicates = await self._find_duplicates()
+                
+                logger.info(f"Found {len(duplicates)} duplicate groups")
+                
+                for group in duplicates:
+                    await self._merge_entity_group(group)
+                
+                await asyncio.sleep(30)  # Low priority - every 30s
+                
+            except Exception as e:
+                logger.error(f"❌ Deduplicator error: {e}", exc_info=True)
+                await asyncio.sleep(60)
+    
+    async def _find_duplicates(self) -> list[list[Entity]]:
+        """
+        Знайти групи дублікатних entities.
+        
+        Критерії дублікату:
+        - Однаковий canonical_name + type
+        - Дуже схожий name (Levenshtein distance < 2)
+        """
+        cypher = """
+        MATCH (e:Entity)
+        WITH e.canonical_name as canonical, e.type as type, collect(e) as entities
+        WHERE size(entities) > 1
+        RETURN canonical, type, entities
+        ORDER BY size(entities) DESC
+        """
+        
+        results = await self.repo.query(cypher)
+        
+        duplicate_groups = []
+        for row in results:
+            entities = [Entity(**e) for e in row["entities"]]
+            duplicate_groups.append(entities)
+        
+        return duplicate_groups
+    
+    async def _merge_entity_group(self, entities: list[Entity]):
+        """
+        Об'єднати групу дублікатних entities в один canonical.
+        
+        Strategy:
+        1. Вибрати canonical (найбільше mention_count)
+        2. Перенести всі relationships на canonical
+        3. Додати aliases
+        4. Видалити дублікати
+        """
+        # Choose canonical (most mentioned)
+        canonical = max(entities, key=lambda e: e.mention_count)
+        
+        logger.info(
+            f"🔄 Merging {len(entities)} entities into: {canonical.name}"
+        )
+        
+        # Collect all names as aliases
+        all_names = set(e.name for e in entities)
+        all_names.discard(canonical.name)  # Remove canonical from aliases
+        
+        # Merge each duplicate into canonical
+        for duplicate in entities:
+            if duplicate.id != canonical.id:
+                # Transfer all MENTIONS relationships
+                cypher_transfer = """
+                MATCH (duplicate:Entity {id: $dup_id})<-[r:MENTIONS]-(source)
+                MATCH (canonical:Entity {id: $can_id})
+                CREATE (source)-[new:MENTIONS]->(canonical)
+                SET new = properties(r)
+                DELETE r
+                """
+                
+                await self.repo.execute(cypher_transfer, {
+                    "dup_id": duplicate.id,
+                    "can_id": canonical.id
+                })
+                
+                # Delete duplicate
+                await self.repo.delete_entity(duplicate.id)
+                
+                logger.info(f"  → Merged: {duplicate.name}")
+        
+        # Update canonical with aliases
+        await self.repo.update_entity_aliases(
+            entity_id=canonical.id,
+            aliases=list(all_names)
+        )
+        
+        # Recalculate mention_count
+        new_count = await self.repo.count_entity_mentions(canonical.id)
+        await self.repo.update_entity_mention_count(canonical.id, new_count)
+        
+        logger.info(
+            f"✅ Merged into {canonical.name} "
+            f"(mentions: {new_count}, aliases: {len(all_names)})"
+        )
+```
+
+### Worker 6: Git Change Watcher
+
+**Goal:** Відстежувати зміни в git та оновлювати code nodes в графі
+
+```python
+# backend/app/agents/cursor/workers/git_watcher.py
+
+import subprocess
+from pathlib import Path
+
+class GitChangeWatcher:
+    """
+    Відстежує git commits та оновлює code structure в графі.
+    """
+    
+    def __init__(self, repository: CursorRepository, repo_path: Path):
+        self.repo = repository
+        self.repo_path = repo_path
+    
+    async def run(self):
+        """Check кожну хвилину."""
+        logger.info("🔍 Git Change Watcher started")
+        
+        while True:
+            try:
+                # Get last processed commit
+                last_commit = await self.repo.get_last_processed_commit()
+                
+                # Get new commits
+                new_commits = await self._get_new_commits(last_commit)
+                
+                if new_commits:
+                    logger.info(f"📝 Processing {len(new_commits)} new commits...")
+                    
+                    for commit in new_commits:
+                        await self._process_commit(commit)
+                
+                await asyncio.sleep(60)  # Every minute
+                
+            except Exception as e:
+                logger.error(f"❌ Git Watcher error: {e}", exc_info=True)
+                await asyncio.sleep(120)
+    
+    async def _get_new_commits(self, since_commit: str | None) -> list[GitCommit]:
+        """Get commits since last processed."""
+        cmd = ["git", "log", "--oneline", "--no-merges"]
+        
+        if since_commit:
+            cmd.append(f"{since_commit}..HEAD")
+        else:
+            cmd.extend(["--max-count=10"])  # First run - last 10 commits
+        
+        result = subprocess.run(
+            cmd,
+            cwd=self.repo_path,
+            capture_output=True,
+            text=True
+        )
+        
+        commits = []
+        for line in result.stdout.strip().split("\n"):
+            if line:
+                sha, message = line.split(" ", 1)
+                commits.append(GitCommit(sha=sha, message=message))
+        
+        return commits
+    
+    async def _process_commit(self, commit: GitCommit):
+        """Process single commit."""
+        logger.info(f"📝 Processing commit {commit.sha[:7]}: {commit.message}")
+        
+        # Get changed files
+        cmd = ["git", "show", "--name-status", "--pretty=", commit.sha]
+        result = subprocess.run(
+            cmd,
+            cwd=self.repo_path,
+            capture_output=True,
+            text=True
+        )
+        
+        changes = []
+        for line in result.stdout.strip().split("\n"):
+            if line:
+                status, path = line.split("\t", 1)
+                changes.append(FileChange(status=status, path=path))
+        
+        # Process each change
+        for change in changes:
+            if change.path.endswith(".py"):
+                await self._process_file_change(commit, change)
+        
+        # Create Commit node
+        await self.repo.create_commit_node(
+            sha=commit.sha,
+            message=commit.message,
+            timestamp=datetime.now(),
+            files_changed=len(changes)
+        )
+        
+        # Mark as processed
+        await self.repo.mark_commit_processed(commit.sha)
+    
+    async def _process_file_change(self, commit: GitCommit, change: FileChange):
+        """Process Python file change."""
+        if change.status == "D":
+            # File deleted - mark nodes as invalid
+            await self.repo.mark_code_nodes_invalid(
+                file_path=change.path,
+                invalid_at=datetime.now(),
+                reason=f"Deleted in {commit.sha[:7]}"
+            )
+            logger.info(f"  ❌ Marked deleted: {change.path}")
+        
+        elif change.status in ["A", "M"]:
+            # File added or modified - reparse
+            file_path = self.repo_path / change.path
+            
+            if file_path.exists():
+                content = file_path.read_text(encoding="utf-8")
+                
+                # Parse Python AST
+                import ast
+                tree = ast.parse(content)
+                
+                # Extract functions
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.FunctionDef):
+                        func_source = ast.get_source_segment(content, node)
+                        
+                        # Create or update Function node
+                        await self.repo.create_or_update_function(
+                            name=node.name,
+                            file_path=change.path,
+                            source_code=func_source,
+                            start_line=node.lineno,
+                            end_line=node.end_lineno,
+                            commit_sha=commit.sha,
+                            valid_at=datetime.now()
+                        )
+                
+                logger.info(f"  ✅ Updated: {change.path}")
+```
+
+---
+
+## Enhanced Graph Schema
+
+### Complete Node Types
+
+```cypher
+// ============================================
+// KNOWLEDGE BASE (Rules, Code, Docs)
+// ============================================
+
+(:KnowledgeBase {
+  id: "cursor_kb_v1",
+  version: "1.0.0",
+  initialized_at: "ISO8601",
+  total_documents: 50,
+  total_chunks: 2500,
+  total_code_files: 120,
+  total_entities: 350
+})
+
+(:Document {
+  id: "uuid",
+  path: ".cursor/rules/agents/clerk.mdc",
+  type: "rules|code|docs",
+  content: "full text",
+  content_hash: "sha256",
+  loaded_at: "ISO8601",
+  last_modified: "ISO8601",
+  chunk_count: 15,
+  status: "active|archived"
+})
+
+(:Chunk {
+  id: "uuid",
+  content: "chunk text (max 800 chars)",
+  position: 0,
+  char_start: 0,
+  char_end: 800,
+  chunk_type: "paragraph|sentence|code|heading",
+  
+  // Embedding (додається worker)
+  embedding: [float × 1536],
+  embedding_model: "text-embedding-3-small",
+  embedding_created_at: "ISO8601",
+  
+  // Processing status
+  status: "pending_vectorization|vectorized|similarity_checked",
+  
+  // Temporal
+  valid_at: "ISO8601",
+  invalid_at: "ISO8601|NULL"
+})
+
+// ============================================
+// CODE STRUCTURE
+// ============================================
+
+(:CodeFile {
+  id: "uuid",
+  path: "backend/app/agents/clerk/nodes.py",
+  language: "python",
+  lines_count: 150,
+  content_hash: "sha256",
+  
+  // Temporal
+  valid_at: "ISO8601",
+  invalid_at: "ISO8601|NULL",
+  
+  // Git context
+  commit_sha: "abc123",
+  last_modified: "ISO8601"
+})
+
+(:Function {
+  id: "uuid",
+  name: "clerk_record_node",
+  signature: "async def clerk_record_node(state: dict, repository: MessageRepository) -> dict",
+  source_code: "full function code",
+  start_line: 10,
+  end_line: 50,
+  
+  // Embedding
+  embedding: [float × 1536],
+  
+  // Metadata
+  is_async: true,
+  parameters: ["state", "repository"],
+  return_type: "dict",
+  
+  // Temporal
+  valid_at: "ISO8601",
+  invalid_at: "ISO8601|NULL"
+})
+
+(:Class {
+  id: "uuid",
+  name: "CursorRepository",
+  docstring: "Repository for cursor_memory operations",
+  methods: ["create_session", "create_user_query"],
+  inherits_from: ["BaseRepository"],
+  
+  // Embedding
+  embedding: [float × 1536]
+})
+
+(:Import {
+  id: "uuid",
+  module: "fastapi",
+  imported_names: ["FastAPI", "HTTPException"],
+  is_from_import: true
+})
+
+// ============================================
+// GIT HISTORY
+// ============================================
+
+(:Commit {
+  sha: "abc123def456",
+  message: "Add clerk agent implementation",
+  author: "developer",
+  timestamp: "ISO8601",
+  files_changed: 5
+})
+
+// ============================================
+// USER INTERACTIONS (Runtime)
+// ============================================
+
+(:UserQuery {
+  id: "uuid",
+  content: "full query text",
+  timestamp: "ISO8601",
+  
+  // Embedding (додається worker)
+  embedding: [float × 1536],
+  
+  // Metadata
+  content_length: 250,
+  has_code: false,
+  language: "uk",
+  
+  // Processing status
+  status: "pending_vectorization|vectorized|entities_extracted",
+  
+  // Temporal
+  valid_at: "ISO8601",
+  invalid_at: "ISO8601|NULL"
+})
+
+(:AssistantResponse {
+  id: "uuid",
+  
+  // Short summary (завжди в графі)
+  summary: "Short summary max 500 chars",
+  summary_embedding: [float × 1536],
+  
+  // Full content reference (якщо >1000 chars)
+  full_content_ref: "responses/2025/11/13/uuid.md",
+  content_length: 5000,
+  
+  // Metadata
+  has_code_blocks: true,
+  code_blocks_count: 3,
+  tools_used: ["read_file", "codebase_search"],
+  files_modified: ["backend/app/main.py"],
+  processing_time_ms: 2534,
+  
+  // Processing status
+  status: "pending_summarization|summarized|vectorized",
+  
+  // Temporal
+  timestamp: "ISO8601",
+  valid_at: "ISO8601"
+})
+
+(:CodeBlock {
+  id: "uuid",
+  language: "python",
+  content: "code snippet",
+  position: 0,  // Position in response
+  lines_count: 15,
+  
+  // Embedding
+  embedding: [float × 1536]
+})
+
+// ============================================
+// ENTITIES (Cross-cutting)
+// ============================================
+
+(:Entity {
+  id: "uuid",
+  
+  // Names
+  name: "Docker",  // Original form
+  canonical_name: "docker",  // Normalized
+  aliases: ["docker", "Docker Engine", "docker-compose"],
+  
+  // Classification
+  type: "TECH|PERSON|ORG|LOCATION|CONCEPT|EVENT|COMPONENT",
+  
+  // Statistics
+  mention_count: 45,
+  first_seen: "ISO8601",
+  last_seen: "ISO8601",
+  
+  // Embedding (для entity search)
+  embedding: [float × 1536],
+  
+  // Confidence
+  confidence: 0.95,
+  
+  // Status
+  status: "active|merged|deprecated"
+})
+
+// ============================================
+// ARCHITECTURAL DECISIONS (Future Phase)
+// ============================================
+
+(:ArchitecturalDecision {
+  id: "uuid",
+  title: "Switch to async-first architecture",
+  description: "All I/O operations must be async",
+  rationale: "Better performance and scalability",
+  alternatives: ["sync with threading", "celery workers"],
+  decided_at: "ISO8601",
+  decided_by: "user|ai|collaborative",
+  status: "proposed|accepted|implemented|deprecated"
+})
+
+(:Issue {
+  id: "uuid",
+  title: "FalkorDB datetime() not supported",
+  description: "Unknown function error when using datetime()",
+  root_cause: "FalkorDB doesn't support datetime() in Cypher",
+  solution: "Store timestamps as ISO strings",
+  discovered_at: "ISO8601",
+  resolved_at: "ISO8601|NULL",
+  status: "encountered|investigating|resolved|unresolved",
+  severity: "critical|high|medium|low"
+})
+```
+
+### Complete Relationship Types
+
+```cypher
+// ============================================
+// KNOWLEDGE BASE RELATIONSHIPS
+// ============================================
+
+(:Document)-[:IN_BASE]->(:KnowledgeBase)
+(:Chunk)-[:PART_OF {position: int}]->(:Document)
+(:CodeFile)-[:IN_BASE]->(:KnowledgeBase)
+(:Function)-[:IN_FILE {start_line: int, end_line: int}]->(:CodeFile)
+(:Class)-[:IN_FILE]->(:CodeFile)
+(:Function)-[:METHOD_OF]->(:Class)
+(:Import)-[:IN_FILE]->(:CodeFile)
+
+// ============================================
+// GIT RELATIONSHIPS
+// ============================================
+
+(:Commit)-[:MODIFIED]->(:CodeFile)
+(:Commit)-[:ADDED]->(:CodeFile)
+(:Commit)-[:DELETED]->(:CodeFile)
+(:UserQuery)-[:CAUSED_CHANGES_IN]->(:Commit)
+
+// ============================================
+// USER INTERACTION RELATIONSHIPS
+// ============================================
+
+(:AssistantResponse)-[:ANSWERS]->(:UserQuery)
+(:CodeBlock)-[:PART_OF {position: int}]->(:AssistantResponse)
+
+// ============================================
+// ENTITY RELATIONSHIPS
+// ============================================
+
+// Query/Response mentions entities
+(:UserQuery)-[:MENTIONS {
+  position: int,
+  context: "surrounding text",
+  confidence: float
+}]->(:Entity)
+
+(:AssistantResponse)-[:MENTIONS]->(:Entity)
+
+// Knowledge base mentions entities
+(:Chunk)-[:MENTIONS]->(:Entity)
+(:Function)-[:MENTIONS]->(:Entity)
+(:Document)-[:DISCUSSES {
+  salience: float,  // Важливість entity в document
+  mention_count: int
+}]->(:Entity)
+
+// Entity co-occurrence
+(:Entity)-[:RELATED_TO {
+  co_occurrence_count: int,
+  strength: float,
+  contexts: ["query_id1", "query_id2"]
+}]-(:Entity)
+
+// Entity merging history
+(:Entity)-[:MERGED_INTO {
+  merged_at: "ISO8601",
+  reason: "duplicate"
+}]->(:Entity)
+
+// ============================================
+// SIMILARITY RELATIONSHIPS
+// ============================================
+
+// Semantic similarity (через embeddings)
+(:Chunk)-[:SIMILAR_TO {
+  similarity: float,
+  algorithm: "cosine",
+  created_at: "ISO8601"
+}]-(:Chunk)
+
+(:UserQuery)-[:SIMILAR_TO]->(:UserQuery)
+(:Function)-[:SIMILAR_TO]->(:Function)
+
+// Message semantic relation
+(:UserQuery)-[:SEMANTICALLY_RELATED {
+  similarity: float,
+  via_entities: ["entity_id1", "entity_id2"],
+  via_chunks: ["chunk_id1", "chunk_id2"]
+}]->(:UserQuery)
+
+// ============================================
+// TEMPORAL RELATIONSHIPS
+// ============================================
+
+(:UserQuery)-[:FOLLOWED_BY {
+  time_delta_seconds: int
+}]->(:UserQuery)
+
+// ============================================
+// DECISION RELATIONSHIPS (Future Phase)
+// ============================================
+
+(:UserQuery)-[:LEADS_TO]->(:ArchitecturalDecision)
+(:ArchitecturalDecision)-[:AFFECTS]->(:Component)
+(:Issue)-[:DISCOVERED_BY]->(:UserQuery)
+(:Issue)-[:FIXED_BY]->(:ArchitecturalDecision)
+(:Issue)-[:FOUND_IN]->(:CodeFile)
+```
+
+---
+
+## Entity Deduplication Strategy
+
+### Problem: Multiple Names for Same Thing
+
+```
+"Docker" vs "docker" vs "Docker Engine" vs "docker-compose"
+"FalkorDB" vs "falkordb" vs "FalkorDB graph database"
+"Clerk Agent" vs "clerk" vs "Писарь"
+```
+
+### Solution: Multi-Stage Deduplication
+
+#### Stage 1: Normalization (During Extraction)
+
+```python
+def normalize_entity(name: str, entity_type: str) -> str:
+    """
+    Normalize entity name для canonical_name.
+    
+    Rules:
+    1. Lowercase
+    2. Trim whitespace
+    3. Remove version numbers (для TECH)
+    4. Apply known aliases
+    """
+    canonical = name.lower().strip()
+    
+    # Remove version numbers
+    if entity_type == "TECH":
+        canonical = re.sub(r'\s+v?\d+(\.\d+)*', '', canonical)
+        canonical = re.sub(r'\s+\d+(\.\d+)*', '', canonical)
+    
+    # Known aliases
+    ALIASES = {
+        "k8s": "kubernetes",
+        "js": "javascript",
+        "ts": "typescript",
+        "py": "python",
+        "gpt": "chatgpt",
+        "ai": "artificial_intelligence",
+    }
+    
+    canonical = ALIASES.get(canonical, canonical)
+    
+    return canonical
+```
+
+#### Stage 2: Fuzzy Matching (During Extraction)
+
+```python
+async def find_similar_entity(
+    canonical_name: str,
+    entity_type: str
+) -> Entity | None:
+    """
+    Find existing entity using fuzzy matching.
+    
+    Methods:
+    1. Exact match on canonical_name
+    2. Check aliases
+    3. Substring match
+    4. Levenshtein distance < 2
+    """
+    # Try exact match
+    cypher = """
+    MATCH (e:Entity {canonical_name: $canonical, type: $type})
+    RETURN e, 1.0 as similarity
+    """
+    
+    result = await repo.query(cypher, {
+        "canonical": canonical_name,
+        "type": entity_type
+    })
+    
+    if result:
+        return result[0]
+    
+    # Try alias match
+    cypher = """
+    MATCH (e:Entity {type: $type})
+    WHERE $canonical IN e.aliases
+    RETURN e, 0.95 as similarity
+    """
+    
+    result = await repo.query(cypher, {
+        "canonical": canonical_name,
+        "type": entity_type
+    })
+    
+    if result:
+        return result[0]
+    
+    # Try substring match (one contains another)
+    cypher = """
+    MATCH (e:Entity {type: $type})
+    WHERE e.canonical_name CONTAINS $canonical
+       OR $canonical CONTAINS e.canonical_name
+    RETURN e, 0.8 as similarity
+    ORDER BY length(e.canonical_name) ASC
+    LIMIT 1
+    """
+    
+    result = await repo.query(cypher, {
+        "canonical": canonical_name,
+        "type": entity_type
+    })
+    
+    if result:
+        return result[0]
+    
+    # No match found
+    return None
+```
+
+#### Stage 3: Background Deduplication (Worker)
+
+Deduplicator worker знаходить entities з:
+- Однаковим `canonical_name + type`
+- Levenshtein distance < 2
+- High embedding similarity (cosine > 0.95)
+
+```python
+async def merge_entities(canonical_id: str, duplicate_ids: list[str]):
+    """
+    Merge duplicate entities into canonical.
+    
+    Process:
+    1. Transfer all MENTIONS relationships
+    2. Collect all names as aliases
+    3. Sum mention_counts
+    4. Update first_seen / last_seen
+    5. Delete duplicates
+    """
+    # Get canonical entity
+    canonical = await repo.get_entity(canonical_id)
+    
+    # Collect aliases
+    all_aliases = set(canonical.aliases or [])
+    total_mentions = canonical.mention_count
+    earliest_seen = canonical.first_seen
+    latest_seen = canonical.last_seen
+    
+    for dup_id in duplicate_ids:
+        duplicate = await repo.get_entity(dup_id)
+        
+        # Add name and aliases
+        all_aliases.add(duplicate.name)
+        if duplicate.aliases:
+            all_aliases.update(duplicate.aliases)
+        
+        # Update statistics
+        total_mentions += duplicate.mention_count
+        earliest_seen = min(earliest_seen, duplicate.first_seen)
+        latest_seen = max(latest_seen, duplicate.last_seen)
+        
+        # Transfer relationships
+        cypher = """
+        MATCH (duplicate:Entity {id: $dup_id})<-[r:MENTIONS]-(source)
+        MATCH (canonical:Entity {id: $can_id})
+        MERGE (source)-[new:MENTIONS]->(canonical)
+        ON CREATE SET new = properties(r)
+        DELETE r
+        """
+        
+        await repo.execute(cypher, {
+            "dup_id": dup_id,
+            "can_id": canonical_id
+        })
+        
+        # Create merge history
+        await repo.create_merge_relationship(
+            from_id=dup_id,
+            to_id=canonical_id,
+            merged_at=datetime.now(),
+            reason="duplicate"
+        )
+        
+        # Delete duplicate
+        await repo.delete_entity(dup_id)
+    
+    # Update canonical
+    await repo.update_entity(
+        entity_id=canonical_id,
+        aliases=list(all_aliases),
+        mention_count=total_mentions,
+        first_seen=earliest_seen,
+        last_seen=latest_seen
+    )
+    
+    logger.info(
+        f"✅ Merged {len(duplicate_ids)} entities into {canonical.name} "
+        f"(total mentions: {total_mentions}, aliases: {len(all_aliases)})"
+    )
+```
+
+---
+
+## Code Evolution Tracking
+
+### Goal: Пов'язати код з запитами та рішеннями
+
+**Use Cases:**
+- "Які запити призвели до створення цієї функції?"
+- "Коли ми востаннє змінювали Clerk Agent?"
+- "Які проблеми виникали при імплементації Repository pattern?"
+- "Як еволюціонував цей модуль за останні 3 місяці?"
+
+### Implementation
+
+#### 1. Initial Codebase Index (при старті)
+
+```python
+async def index_codebase():
+    """Parse existing codebase and create initial nodes."""
+    python_files = glob.glob("backend/**/*.py", recursive=True)
+    
+    for file_path in python_files:
+        # Get git history for file
+        commits = await git.get_file_history(file_path)
+        first_commit = commits[-1] if commits else None
+        
+        # Parse current version
+        content = Path(file_path).read_text()
+        tree = ast.parse(content)
+        
+        # Create CodeFile node
+        file_id = await repo.create_code_file(
+            path=file_path,
+            language="python",
+            content_hash=hash_content(content),
+            valid_at=first_commit.timestamp if first_commit else datetime.now()
+        )
+        
+        # Extract functions
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                await repo.create_function(
+                    name=node.name,
+                    file_id=file_id,
+                    source_code=ast.get_source_segment(content, node),
+                    # ... metadata
+                )
+```
+
+#### 2. Link Queries to Commits
+
+**Strategy:** Коли користувач щось змінює, ми пов'язуємо його запит з наступним commit.
+
+```python
+# В Hot Path (після відповіді)
+if response.contains_file_edits:
+    # Mark query as "pending_commit_link"
+    await repo.mark_query_pending_commit_link(query_id)
+
+# Git Watcher (коли бачить новий commit)
+async def process_new_commit(commit: GitCommit):
+    # Знайти queries pending link за останні 10 хвилин
+    pending_queries = await repo.get_queries_pending_commit_link(
+        since=commit.timestamp - timedelta(minutes=10)
+    )
+    
+    for query in pending_queries:
+        # Create relationship
+        await repo.create_relationship(
+            from_node=query.id,
+            to_node=commit.sha,
+            type="CAUSED_CHANGES_IN",
+            properties={
+                "time_delta_seconds": (commit.timestamp - query.timestamp).total_seconds()
+            }
+        )
+        
+        logger.info(f"🔗 Linked query {query.id[:8]} to commit {commit.sha[:7]}")
+```
+
+#### 3. Track Function Evolution
+
+```cypher
+// Query: Як еволюціонувала функція clerk_record_node?
+MATCH (f:Function {name: "clerk_record_node"})
+OPTIONAL MATCH (f)-[:IN_FILE]->(file:CodeFile)<-[:MODIFIED]-(c:Commit)
+OPTIONAL MATCH (c)<-[:CAUSED_CHANGES_IN]-(q:UserQuery)
+RETURN f, file, c, q
+ORDER BY c.timestamp ASC
+
+// Result: Хронологія змін з пов'язаними запитами
+```
+
+#### 4. Code Reference in Context
+
+```python
+async def build_context_with_code(query: UserQuery):
+    """Include relevant code in context."""
+    # Find entities
+    entities = await find_entities_in_query(query)
+    
+    # Find code nodes mentioning these entities
+    code_context = []
+    for entity in entities:
+        # Functions that mention this entity
+        functions = await repo.get_functions_mentioning_entity(entity.id)
+        
+        for func in functions:
+            code_context.append({
+                "type": "function",
+                "name": func.name,
+                "file": func.file_path,
+                "source": func.source_code,
+                "relevance": "mentions " + entity.name
+            })
+    
+    return {
+        "entities": entities,
+        "code_context": code_context,
+        # ... other context
+    }
+```
+
+---
+
+## Response Storage Strategy
+
+### Problem: Мої відповіді можуть бути дуже довгими
+
+- Прості відповіді: 200-500 chars
+- Середні: 1000-2000 chars
+- Довгі: 3000-10000 chars
+- З кодом: може бути 20000+ chars
+
+### Solution: Hybrid Storage
+
+#### Short Responses (<1000 chars)
+
+**Зберігаємо повністю в графі:**
+
+```cypher
+(:AssistantResponse {
+  id: "uuid",
+  content: "full text here",
+  content_length: 450,
+  embedding: [...]
+})
+```
+
+#### Long Responses (>1000 chars)
+
+**Summary в графі + full text в файлі:**
+
+```cypher
+(:AssistantResponse {
+  id: "uuid",
+  summary: "Created Clerk Agent implementation with async repository pattern...",
+  summary_embedding: [...],
+  full_content_ref: "responses/2025/11/13/abc123.md",
+  content_length: 5000
+})
+```
+
+**File structure:**
+```
+responses/
+  2025/
+    11/
+      13/
+        abc123def456.md  # Response ID as filename
+        abc456def789.md
+```
+
+**File format:**
+```markdown
+---
+response_id: abc123def456
+query_id: query789
+timestamp: 2025-11-13T15:30:00Z
+content_length: 5000
+---
+
+# Assistant Response
+
+[Full response content here...]
+```
+
+#### Code Blocks (окремі nodes)
+
+```cypher
+(:AssistantResponse)-[:CONTAINS_CODE {position: 0}]->(:CodeBlock {
+  language: "python",
+  content: "async def example():\n    pass",
+  lines_count: 2,
+  embedding: [...]
+})
+```
+
+**Чому окремо?**
+- Можна шукати code snippets незалежно
+- Можна векторизувати окремо
+- Можна зв'язувати з Functions (схожість)
+
+### Indexing by Cursor
+
+```python
+async def index_response_file(response_id: str, file_path: Path):
+    """
+    Cursor може проіндексувати файл відповіді.
+    
+    - Read metadata from frontmatter
+    - Link to query
+    - Update search index
+    """
+    # Cursor's file indexer picks this up automatically
+    # since it's in workspace
+    pass
+```
+
+---
+
+## Performance Targets & SLA
+
+### Hot Path (User Blocking)
+
+| Operation | Target | Max | Notes |
+|-----------|--------|-----|-------|
+| Save UserQuery | 10-20ms | 30ms | Single CREATE |
+| Quick Entity Match | 20-40ms | 60ms | Substring search |
+| Context Retrieval | 30-50ms | 80ms | Cypher with JOINs |
+| Save Response | 15-25ms | 40ms | Single CREATE |
+| **TOTAL OVERHEAD** | **75-135ms** | **210ms** | Before Gemini |
+| Gemini Response | 2-3s | 5s | External API |
+| **TOTAL USER WAIT** | **2.1-3.1s** | **5.2s** | End-to-end |
+
+### Async Workers (Non-Blocking)
+
+| Worker | Processing Time | Frequency | Notes |
+|--------|----------------|-----------|-------|
+| Real-time Vectorizer | 150-250ms | 0.1s | OpenAI API |
+| Entity Extractor | 300-500ms | 1s | OpenAI + fuzzy match |
+| Similarity Linker | 50-150ms | 2s | In-memory NumPy |
+| Response Summarizer | 400-800ms | 5s | OpenAI + file I/O |
+| Entity Deduplicator | 100-300ms | 30s | Graph queries |
+| Git Change Watcher | 200-500ms | 60s | Git commands + parsing |
+
+### Database Performance
+
+| Query Type | Target | Max | Optimization |
+|------------|--------|-----|--------------|
+| Entity substring match | 10-20ms | 40ms | Index on canonical_name |
+| Get recent messages | 20-30ms | 50ms | Index on timestamp |
+| Similarity search (1K nodes) | 40-80ms | 150ms | In-memory NumPy |
+| Similarity search (10K nodes) | 80-200ms | 400ms | Consider Redis VSS |
+| Similarity search (100K+ nodes) | N/A | N/A | MUST use Redis/Qdrant |
+
+### Scaling Thresholds
+
+**До 10,000 queries:**
+- ✅ In-memory similarity працює
+- ✅ Single FalkorDB instance
+- ✅ All workers на одній machine
+
+**10,000 - 50,000 queries:**
+- ⚠️ In-memory similarity повільніє
+- 🔧 Consider Redis Stack VSS
+- ✅ Single instance ще OK
+
+**50,000+ queries:**
+- ❌ MUST use vector DB (Redis/Qdrant)
+- 🔧 Consider horizontal scaling workers
+- 🔧 FalkorDB может потребувати більше RAM
+
+---
+
+## Implementation Phase Plan
+
+### Phase 1: Foundation (Week 1-2)
+
+**Goal:** Hot path працює, користувач отримує відповіді з контекстом
+
+**Tasks:**
+- [ ] Enhanced CursorRepository з entity operations
+- [ ] Quick entity matcher (substring search)
+- [ ] Context builder з entity-based retrieval
+- [ ] Base knowledge initialization script
+- [ ] Load `.cursor/rules/*.mdc` в граф
+- [ ] Entity extraction з base knowledge
+
+**Deliverables:**
+- Користувач отримує відповідь <3s
+- Контекст будується через entities
+- Base knowledge в графі
+
+**Testing:**
+- Query: "Як працює Clerk Agent?"
+- Expected: Контекст з `.cursor/rules/agents/clerk.mdc`
+
+### Phase 2: Async Workers Core (Week 3-4)
+
+**Goal:** Background processing працює, векторизація та entity extraction
+
+**Tasks:**
+- [ ] Worker 1: Real-time Vectorizer
+- [ ] Worker 2: Entity Extractor
+- [ ] Worker 3: Similarity Linker
+- [ ] Worker orchestration (supervisor)
+- [ ] Health monitoring
+- [ ] Error handling & retry logic
+
+**Deliverables:**
+- Queries векторизуються <200ms після відповіді
+- Entities витягуються <500ms
+- Similarity edges створюються <2s
+
+**Testing:**
+- Submit query → Check DB after 3s → Verify embedding present
+- Submit query → Check DB after 2s → Verify entities extracted
+- Submit query → Check DB after 5s → Verify SIMILAR_TO edges
+
+### Phase 3: Response Storage (Week 5)
+
+**Goal:** Довгі відповіді зберігаються ефективно
+
+**Tasks:**
+- [ ] Worker 4: Response Summarizer
+- [ ] File storage structure
+- [ ] Code block extraction
+- [ ] Summary vectorization
+- [ ] File indexing integration
+
+**Deliverables:**
+- Responses >1000 chars → summary в графі + file
+- Code blocks як окремі nodes
+- Summaries векторизовані
+
+**Testing:**
+- Generate long response → Verify file created
+- Verify summary in graph
+- Verify code blocks extracted
+
+### Phase 4: Code Integration (Week 6-7)
+
+**Goal:** Codebase в графі, evolution tracking
+
+**Tasks:**
+- [ ] Codebase parser (Python AST)
+- [ ] Worker 6: Git Change Watcher
+- [ ] Link queries to commits
+- [ ] Function evolution tracking
+- [ ] Code context в context builder
+
+**Deliverables:**
+- Codebase проіндексований
+- Git changes відстежуються
+- Queries пов'язані з commits
+- Code snippets в контексті
+
+**Testing:**
+- Make code change → Commit → Verify linked to query
+- Query about function → Verify code included in context
+- Check function history → Verify evolution visible
+
+### Phase 5: Entity Intelligence (Week 8)
+
+**Goal:** Smart entity management
+
+**Tasks:**
+- [ ] Worker 5: Entity Deduplicator
+- [ ] Fuzzy matching improvements
+- [ ] Alias management
+- [ ] Entity relationship mining
+- [ ] Entity-based analytics
+
+**Deliverables:**
+- Duplicates автоматично об'єднуються
+- Aliases підтримуються
+- Entity co-occurrence графік
+
+**Testing:**
+- Create duplicates → Verify merged after 30s
+- Query with alias → Verify recognized
+- Check entity relationships → Verify co-occurrence tracked
+
+### Phase 6: Polish & Optimize (Week 9-10)
+
+**Goal:** Production-ready performance
+
+**Tasks:**
+- [ ] Performance profiling
+- [ ] Query optimization
+- [ ] Vector search evaluation (Redis VSS?)
+- [ ] Monitoring dashboards
+- [ ] Documentation
+- [ ] End-to-end testing
+
+**Deliverables:**
+- All SLAs met consistently
+- Monitoring in place
+- Full documentation
+- Production deployment ready
+
+**Testing:**
+- Load testing (100 queries/hour)
+- Measure all timings
+- Verify no memory leaks
+- Stress test workers
+
+---
+
+## Quick Start Commands
+
+### Initialize Knowledge Base
+
+```bash
+# Перший запуск - завантажити base knowledge
+python -m app.agents.cursor.scripts.init_knowledge_base
+
+# Завантажити правила
+python -m app.agents.cursor.scripts.load_rules
+
+# Проіндексувати codebase
+python -m app.agents.cursor.scripts.index_codebase
+```
+
+### Start Workers
+
+```bash
+# В production через Docker Compose
+docker-compose up cursor-workers
+
+# Для development - запустити окремо
+python -m app.agents.cursor.workers.vectorizer &
+python -m app.agents.cursor.workers.entity_extractor &
+python -m app.agents.cursor.workers.similarity_linker &
+python -m app.agents.cursor.workers.response_summarizer &
+python -m app.agents.cursor.workers.entity_deduplicator &
+python -m app.agents.cursor.workers.git_watcher &
+```
+
+### Monitor Workers
+
+```bash
+# Health check
+curl http://localhost:8000/api/cursor/workers/health
+
+# Worker status
+curl http://localhost:8000/api/cursor/workers/status
+
+# Processing statistics
+curl http://localhost:8000/api/cursor/stats
+```
+
+---
+
+## Configuration Reference
+
+```python
+# backend/app/core/config.py
+
+class Settings(BaseSettings):
+    # ... existing ...
+    
+    # ===== CURSOR MEMORY SYSTEM =====
+    
+    # Hot Path Settings
+    cursor_hot_path_timeout_ms: int = 200
+    cursor_entity_match_method: str = "substring"  # substring|fuzzy|hybrid
+    cursor_context_recent_limit: int = 10
+    cursor_context_related_limit: int = 5
+    cursor_include_code_context: bool = True
+    
+    # Knowledge Base
+    cursor_kb_rules_path: str = ".cursor/rules"
+    cursor_kb_codebase_path: str = "backend"
+    cursor_kb_docs_path: str = "docs"
+    cursor_kb_auto_reload: bool = False
+    
+    # OpenAI Settings
+    openai_api_key: str = os.getenv("OPENAI_API_KEY")
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_embedding_dimensions: int = 1536
+    openai_entity_model: str = "gpt-4o-mini"
+    openai_summary_model: str = "gpt-4o-mini"
+    
+    # Worker Settings
+    cursor_vectorizer_frequency_ms: int = 100
+    cursor_entity_extractor_frequency_ms: int = 1000
+    cursor_similarity_linker_frequency_ms: int = 2000
+    cursor_summarizer_frequency_ms: int = 5000
+    cursor_deduplicator_frequency_ms: int = 30000
+    cursor_git_watcher_frequency_ms: int = 60000
+    
+    # Worker Batch Sizes
+    cursor_vectorizer_batch_size: int = 1
+    cursor_entity_extractor_batch_size: int = 3
+    cursor_similarity_linker_batch_size: int = 10
+    cursor_summarizer_batch_size: int = 5
+    
+    # Similarity Settings
+    cursor_similarity_threshold: float = 0.7
+    cursor_similarity_top_k: int = 10
+    cursor_similarity_method: str = "cosine"  # cosine|euclidean
+    
+    # Entity Settings
+    cursor_entity_fuzzy_threshold: float = 0.9
+    cursor_entity_alias_max: int = 10
+    cursor_entity_merge_threshold: float = 0.95
+    
+    # Response Storage
+    cursor_response_storage_path: Path = Path("responses")
+    cursor_response_summary_threshold: int = 1000  # chars
+    cursor_response_summary_max_length: int = 500
+    cursor_code_block_separate: bool = True
+    
+    # Git Integration
+    cursor_git_enabled: bool = True
+    cursor_git_link_window_minutes: int = 10
+    cursor_git_track_extensions: list[str] = [".py", ".ts", ".tsx", ".md"]
+    
+    # Performance
+    cursor_max_context_tokens: int = 4000
+    cursor_cache_embeddings: bool = True
+    cursor_cache_ttl_seconds: int = 3600
+    
+    # Monitoring
+    cursor_enable_metrics: bool = True
+    cursor_log_level: str = "INFO"
+    cursor_worker_health_check_interval: int = 30
+```
+
+---
+
+## Monitoring & Observability
+
+### Key Metrics to Track
+
+```python
+# Hot Path Metrics
+cursor_hot_path_duration_ms = Histogram(
+    "cursor_hot_path_duration_milliseconds",
+    "Time for hot path processing",
+    buckets=[10, 25, 50, 75, 100, 150, 200, 300]
+)
+
+cursor_entity_matches_count = Histogram(
+    "cursor_entity_matches",
+    "Number of entities matched per query",
+    buckets=[0, 1, 2, 5, 10, 20, 50]
+)
+
+cursor_context_retrieval_time_ms = Histogram(
+    "cursor_context_retrieval_milliseconds",
+    "Time to build context",
+    buckets=[10, 20, 30, 50, 80, 120, 200]
+)
+
+# Worker Metrics
+cursor_worker_processing_time = Histogram(
+    "cursor_worker_processing_seconds",
+    "Worker processing time",
+    labelnames=["worker_name"],
+    buckets=[0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0]
+)
+
+cursor_worker_queue_size = Gauge(
+    "cursor_worker_queue_size",
+    "Pending items in worker queue",
+    labelnames=["worker_name"]
+)
+
+cursor_worker_errors = Counter(
+    "cursor_worker_errors_total",
+    "Worker errors",
+    labelnames=["worker_name", "error_type"]
+)
+
+# Entity Metrics
+cursor_entities_total = Gauge(
+    "cursor_entities_total",
+    "Total entities in graph",
+    labelnames=["entity_type"]
+)
+
+cursor_entity_merges_total = Counter(
+    "cursor_entity_merges_total",
+    "Total entity merges"
+)
+
+# Similarity Metrics
+cursor_similarity_score = Histogram(
+    "cursor_similarity_score",
+    "Distribution of similarity scores",
+    buckets=[0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0]
+)
+
+# Response Storage Metrics
+cursor_responses_summarized = Counter(
+    "cursor_responses_summarized_total",
+    "Total responses summarized"
+)
+
+cursor_response_file_size_bytes = Histogram(
+    "cursor_response_file_size_bytes",
+    "Response file sizes",
+    buckets=[100, 500, 1000, 2000, 5000, 10000, 50000]
+)
+```
+
+### Health Check Endpoint
+
+```python
+@router.get("/api/cursor/health")
+async def cursor_health_check():
+    """Complete health check for Cursor Memory System."""
+    
+    health = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "components": {}
+    }
+    
+    # Check FalkorDB
+    try:
+        await repo.query("MATCH (n) RETURN count(n) LIMIT 1")
+        health["components"]["falkordb"] = "healthy"
+    except Exception as e:
+        health["components"]["falkordb"] = f"unhealthy: {e}"
+        health["status"] = "degraded"
+    
+    # Check OpenAI
+    try:
+        await openai_client.models.list()
+        health["components"]["openai"] = "healthy"
+    except Exception as e:
+        health["components"]["openai"] = f"unhealthy: {e}"
+        health["status"] = "degraded"
+    
+    # Check Workers
+    for worker_name in WORKERS:
+        status = await check_worker_health(worker_name)
+        health["components"][f"worker_{worker_name}"] = status
+        if status != "healthy":
+            health["status"] = "degraded"
+    
+    # Check Storage
+    if not RESPONSE_STORAGE_PATH.exists():
+        health["components"]["storage"] = "unhealthy: path not found"
+        health["status"] = "degraded"
+    else:
+        health["components"]["storage"] = "healthy"
+    
+    return health
+```
+
+---
+
+## Troubleshooting Guide
+
+### Issue: Hot Path Too Slow (>200ms)
+
+**Diagnosis:**
+```bash
+# Check query timings in logs
+grep "Hot path:" /var/log/cursor/app.log | tail -n 100
+
+# Profile specific query
+curl -X POST http://localhost:8000/api/cursor/debug/profile \
+  -d '{"query": "test query"}'
+```
+
+**Solutions:**
+- Add index on `Entity.canonical_name`
+- Reduce `cursor_context_related_limit`
+- Disable code context temporary
+- Check FalkorDB memory/CPU
+
+### Issue: Worker Falling Behind
+
+**Diagnosis:**
+```bash
+# Check worker queue sizes
+curl http://localhost:8000/api/cursor/workers/status
+
+# Check logs for errors
+grep "Worker error" /var/log/cursor/workers.log
+```
+
+**Solutions:**
+- Increase worker `batch_size`
+- Scale horizontally (multiple workers)
+- Increase frequency interval (process less often)
+- Check OpenAI rate limits
+
+### Issue: Entities Not Matching
+
+**Diagnosis:**
+```bash
+# Check entity extraction
+curl http://localhost:8000/api/cursor/debug/extract-entities \
+  -d '{"text": "Docker and Kubernetes"}'
+
+# Check existing entities
+curl http://localhost:8000/api/cursor/entities?type=TECH
+```
+
+**Solutions:**
+- Check normalization logic
+- Add more aliases manually
+- Reduce fuzzy_threshold
+- Re-run entity extraction on base knowledge
+
+### Issue: Memory Usage High
+
+**Diagnosis:**
+```bash
+# Check graph size
+curl http://localhost:8000/api/cursor/stats
+
+# Check in-memory embeddings
+ps aux | grep cursor_workers
+```
+
+**Solutions:**
+- Move to Redis VSS для similarity search
+- Implement embedding pagination
+- Archive old responses
+- Increase swap memory
+
+---
+
+## Future Enhancements
+
+### Phase 4+: Advanced Features
+
+**1. Multi-User Knowledge Sharing**
+- Cross-user entity graph
+- Team knowledge base
+- Privacy controls
+
+**2. Semantic Code Search**
+- "Find functions similar to this logic"
+- Natural language code queries
+- Cross-project patterns
+
+**3. Predictive Context**
+- ML model предсказує який контекст потрібен
+- Preload context before query
+
+**4. Time-Travel Queries**
+- "How did we implement X in July?"
+- Temporal graph visualization
+
+**5. Automatic Documentation Generation**
+- Generate docs з queries + responses
+- Keep docs synced з code changes
+
+**6. Conversation Analytics**
+- Most discussed topics
+- Knowledge gaps detection
+- Query patterns analysis
+
+---
+
+## References & Credits
+
+**Inspiration:**
+- [Graphiti](https://github.com/getzep/graphiti) - Temporal knowledge graphs
+- [LangChain Memory](https://python.langchain.com/docs/modules/memory/) - Conversation memory patterns
+- [Redis VSS](https://redis.io/docs/stack/search/reference/vectors/) - Vector similarity search
+- [FalkorDB](https://www.falkordb.com/) - Graph database
+
+**Technologies:**
+- OpenAI Embeddings (text-embedding-3-small)
+- OpenAI Structured Output (gpt-4o-mini)
+- FalkorDB (graph database)
+- LangGraph (workflow orchestration)
+- NumPy/scikit-learn (similarity calculations)
+
+---
+
+**Version:** 3.0.0  
+**Created:** November 13, 2025  
+**Status:** 🏗️ Design Complete - Ready for Implementation  
+**Next Steps:** Begin Phase 1 implementation  
+**Estimated Timeline:** 10 weeks to full production deployment

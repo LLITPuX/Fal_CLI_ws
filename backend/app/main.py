@@ -1,7 +1,11 @@
 """FastAPI application entrypoint."""
 
+import asyncio
+import json
 import logging
+import sys
 import time
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -30,6 +34,138 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _auto_load_rules_if_needed(client):
+    """Auto-load rules into Knowledge Base if it doesn't exist.
+    
+    Args:
+        client: FalkorDB client instance (for main graph)
+    """
+    try:
+        # Create separate client for cursor_memory graph
+        from app.db.falkordb.client import FalkorDBClient
+        
+        cursor_client = FalkorDBClient(
+            host=settings.falkordb_host,
+            port=settings.falkordb_port,
+            graph_name="cursor_memory",
+            max_query_time=60
+        )
+        
+        try:
+            await cursor_client.connect()
+        except Exception as e:
+            logger.error(f"Failed to connect to cursor_memory graph: {e}")
+            return
+        
+        try:
+            # Check if Knowledge Base exists and has documents
+            kb_id = "cursor_rules_v3"
+            cypher = """
+            MATCH (kb:KnowledgeBase {id: $kb_id})
+            OPTIONAL MATCH (kb)<-[:IN_BASE]-(d:Document)
+            RETURN kb, count(d) as doc_count
+            """
+            results, _ = await cursor_client.query(cypher, {"kb_id": kb_id})
+            
+            if len(results) > 0:
+                doc_count = results[0].get("doc_count", 0)
+                if doc_count > 0:
+                    logger.info(f"📚 Knowledge Base already exists with {doc_count} documents. Skipping auto-load.")
+                    return
+                else:
+                    logger.info("📚 Knowledge Base exists but has no documents. Will load rules.")
+            
+            logger.info("📚 Knowledge Base is empty. Auto-loading rules...")
+            
+            # Check if manifest exists
+            manifest_path = Path("/app/scripts/rules_manifest.json")
+            logger.debug(f"Checking manifest at: {manifest_path}")
+            
+            if not manifest_path.exists():
+                # Try alternative path (for local development)
+                manifest_path = Path("backend/scripts/rules_manifest.json")
+                logger.debug(f"Trying alternative path: {manifest_path}")
+                if not manifest_path.exists():
+                    logger.warning(
+                        f"⚠️  Manifest not found at /app/scripts/rules_manifest.json or {manifest_path}. "
+                        "Run validate_rules.py first to generate manifest."
+                    )
+                    return
+            
+            logger.info(f"📄 Found manifest at: {manifest_path}")
+            
+            # Load manifest
+            try:
+                manifest_content = manifest_path.read_text(encoding="utf-8")
+                manifest = json.loads(manifest_content)
+                logger.debug(f"Manifest loaded: {len(manifest)} entries")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse manifest JSON: {e}")
+                return
+            except Exception as e:
+                logger.error(f"Failed to load manifest: {e}", exc_info=True)
+                return
+            
+            if not manifest:
+                logger.warning("⚠️  Manifest is empty. No rules to load.")
+                return
+            
+            logger.info(f"📚 Found {len(manifest)} files to load")
+            
+            # Import loader class (need to add scripts to path)
+            scripts_path = Path("/app/scripts")
+            if not scripts_path.exists():
+                scripts_path = Path("backend/scripts")
+            
+            logger.debug(f"Scripts path: {scripts_path}, exists: {scripts_path.exists()}")
+            
+            if scripts_path.exists():
+                sys.path.insert(0, str(scripts_path))
+            
+            try:
+                logger.info("📦 Importing KnowledgeBaseLoader...")
+                from load_rules_to_kb import KnowledgeBaseLoader
+                
+                # Create loader instance
+                loader = KnowledgeBaseLoader()
+                
+                # Use cursor_memory client
+                loader.client = cursor_client
+                
+                logger.info("🚀 Starting rules loading...")
+                # Load all rules (without force_reload to avoid clearing if something exists)
+                success = await loader.load_all(force_reload=False)
+                
+                if success:
+                    logger.info("✅ Rules loaded successfully!")
+                else:
+                    logger.warning("⚠️  Some rules failed to load. Check logs above.")
+                    if loader.stats.get("errors"):
+                        for error in loader.stats["errors"][:5]:  # Show first 5 errors
+                            logger.error(f"  - {error}")
+                    
+            except ImportError as e:
+                logger.error(f"Failed to import KnowledgeBaseLoader: {e}", exc_info=True)
+                logger.warning("⚠️  Skipping auto-load. Install required dependencies.")
+            except Exception as e:
+                logger.error(f"Unexpected error during rules loading: {e}", exc_info=True)
+            finally:
+                # Remove from path
+                if str(scripts_path) in sys.path:
+                    sys.path.remove(str(scripts_path))
+        finally:
+            # Disconnect cursor_memory client
+            try:
+                await cursor_client.disconnect()
+            except Exception:
+                pass
+                
+    except Exception as e:
+        logger.error(f"Failed to auto-load rules: {e}", exc_info=True)
+        # Don't fail startup if auto-load fails
+        logger.warning("⚠️  Continuing startup without auto-loaded rules.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown events.
@@ -50,6 +186,9 @@ async def lifespan(app: FastAPI):
             f"FalkorDB initialized: {settings.falkordb_host}:"
             f"{settings.falkordb_port}/{settings.falkordb_graph_name}"
         )
+        
+        # Auto-load rules if Knowledge Base is empty
+        await _auto_load_rules_if_needed(client)
         
         # Load default templates
         await load_default_templates(client)
