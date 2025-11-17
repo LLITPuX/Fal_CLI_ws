@@ -166,6 +166,114 @@ async def _auto_load_rules_if_needed(client):
         logger.warning("⚠️  Continuing startup without auto-loaded rules.")
 
 
+async def _auto_index_codebase_if_needed(client):
+    """Auto-index codebase into Knowledge Base if not already indexed.
+    
+    Args:
+        client: FalkorDB client instance (for main graph)
+    """
+    try:
+        # Create separate client for cursor_memory graph
+        from app.db.falkordb.client import FalkorDBClient
+        
+        cursor_client = FalkorDBClient(
+            host=settings.falkordb_host,
+            port=settings.falkordb_port,
+            graph_name="cursor_memory",
+            max_query_time=60
+        )
+        
+        try:
+            await cursor_client.connect()
+        except Exception as e:
+            logger.error(f"Failed to connect to cursor_memory graph: {e}")
+            return
+        
+        try:
+            # Check if Knowledge Base exists
+            kb_id = "cursor_rules_v3"
+            cypher = """
+            MATCH (kb:KnowledgeBase {id: $kb_id})
+            RETURN kb
+            """
+            results, _ = await cursor_client.query(cypher, {"kb_id": kb_id})
+            
+            if len(results) == 0:
+                logger.info("📚 Knowledge Base not found. Skipping codebase indexing (load rules first).")
+                return
+            
+            # Check if code already indexed
+            cypher = """
+            MATCH (kb:KnowledgeBase {id: $kb_id})<-[:IN_BASE]-(cf:CodeFile)
+            RETURN count(cf) as file_count
+            """
+            results, _ = await cursor_client.query(cypher, {"kb_id": kb_id})
+            file_count = results[0].get("file_count", 0) if results else 0
+            
+            if file_count > 0:
+                logger.info(f"💻 Codebase already indexed ({file_count} files). Skipping auto-index.")
+                return
+            
+            logger.info("💻 Codebase not indexed. Auto-indexing Python files...")
+            
+            # Import indexer class (need to add scripts to path)
+            scripts_path = Path("/app/scripts")
+            if not scripts_path.exists():
+                scripts_path = Path("backend/scripts")
+            
+            logger.debug(f"Scripts path: {scripts_path}, exists: {scripts_path.exists()}")
+            
+            if scripts_path.exists():
+                sys.path.insert(0, str(scripts_path))
+            
+            try:
+                logger.info("📦 Importing CodebaseIndexer...")
+                from index_codebase import CodebaseIndexer
+                
+                # Create indexer instance
+                codebase_path = "/app/app"  # Container path
+                if not Path(codebase_path).exists():
+                    codebase_path = "backend/app"  # Local path
+                
+                indexer = CodebaseIndexer(codebase_path=codebase_path)
+                
+                # Use cursor_memory client
+                indexer.client = cursor_client
+                
+                logger.info("🚀 Starting codebase indexing...")
+                # Index all files (without force_reload to avoid clearing if something exists)
+                success = await indexer.index_all(force_reload=False)
+                
+                if success:
+                    logger.info(f"✅ Codebase indexed successfully! ({indexer.stats['files_indexed']} files, {indexer.stats['functions_indexed']} functions)")
+                else:
+                    logger.warning("⚠️  Some files failed to index. Check logs above.")
+                    if indexer.stats.get("errors"):
+                        for error in indexer.stats["errors"][:5]:  # Show first 5 errors
+                            logger.error(f"  - {error}")
+                    
+            except ImportError as e:
+                logger.error(f"Failed to import CodebaseIndexer: {e}", exc_info=True)
+                logger.warning("⚠️  Skipping auto-index. Install required dependencies.")
+            except Exception as e:
+                logger.error(f"Unexpected error during codebase indexing: {e}", exc_info=True)
+            finally:
+                # Remove from path
+                if str(scripts_path) in sys.path:
+                    sys.path.remove(str(scripts_path))
+        finally:
+            # Disconnect cursor_memory client
+            try:
+                await cursor_client.disconnect()
+            except Exception:
+                pass
+                
+    except Exception as e:
+        logger.error(f"Failed to auto-index codebase: {e}", exc_info=True)
+        # Don't fail startup if auto-index fails
+        logger.warning("⚠️  Continuing startup without auto-indexed codebase.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown events.
@@ -187,8 +295,12 @@ async def lifespan(app: FastAPI):
             f"{settings.falkordb_port}/{settings.falkordb_graph_name}"
         )
         
-        # Auto-load rules if Knowledge Base is empty
-        await _auto_load_rules_if_needed(client)
+        # Auto-load rules if Knowledge Base is empty (async, non-blocking)
+        # Run in background to avoid blocking startup
+        asyncio.create_task(_auto_load_rules_if_needed(client))
+        
+        # Auto-index codebase if not already indexed (async, non-blocking)
+        asyncio.create_task(_auto_index_codebase_if_needed(client))
         
         # Load default templates
         await load_default_templates(client)

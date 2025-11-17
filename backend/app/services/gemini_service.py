@@ -187,14 +187,23 @@ class GeminiService:
                 response_content = parsed["response"]
                 
                 # Check if response is empty or not a string
-                if not response_content or not isinstance(response_content, str):
+                if not response_content:
                     raise JSONParsingError(
                         f"Empty or invalid response from CLI. Full output: {s[:500]}"
                     )
                 
+                # Handle case where response is already a dict (not a string)
+                if isinstance(response_content, dict):
+                    return response_content
+                
                 # Re-parse unwrapped content (may have markdown)
-                extracted = self._extract_json_from_text(response_content)
-                return json.loads(extracted)
+                # First try to parse as JSON directly (in case it's already valid JSON)
+                try:
+                    return json.loads(response_content)
+                except json.JSONDecodeError:
+                    # If not valid JSON, extract from markdown
+                    extracted = self._extract_json_from_text(response_content)
+                    return json.loads(extracted)
             return parsed
         except json.JSONDecodeError:
             pass
@@ -221,35 +230,100 @@ class GeminiService:
         Raises:
             JSONParsingError: If no valid JSON found
         """
+        import re
+        
         original_text = text
         
         # Remove markdown code blocks (try different patterns)
-        if "```json" in text:
-            start = text.find("```json") + 7
-            end = text.find("```", start)
-            if end != -1:
-                text = text[start:end].strip()
-        elif "```" in text:
-            # Handle ```\njson\n{...} or just ```\n{...}
-            start = text.find("```") + 3
-            end = text.find("```", start)
-            if end != -1:
-                text = text[start:end].strip()
-                # Remove potential "json" at the beginning
-                if text.startswith("json\n") or text.startswith("json "):
-                    text = text[5:].strip()
+        # Pattern 1: ```json\n{...}\n``` (most common)
+        json_block_pattern = r"```json\s*\n(.*?)\n```"
+        match = re.search(json_block_pattern, text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+        else:
+            # Pattern 2: ```json{...}``` (no newlines)
+            json_block_pattern2 = r"```json\s*(.*?)\s*```"
+            match = re.search(json_block_pattern2, text, re.DOTALL)
+            if match:
+                text = match.group(1).strip()
+            else:
+                # Pattern 3: ```\njson\n{...}\n```
+                json_block_pattern3 = r"```\s*json\s*\n(.*?)\n```"
+                match = re.search(json_block_pattern3, text, re.DOTALL)
+                if match:
+                    text = match.group(1).strip()
+                else:
+                    # Pattern 4: ```\n{...}\n``` (generic code block)
+                    code_block_pattern = r"```\s*\n(.*?)\n```"
+                    match = re.search(code_block_pattern, text, re.DOTALL)
+                    if match:
+                        text = match.group(1).strip()
+                        # Remove potential "json" at the beginning
+                        if text.startswith("json\n") or text.startswith("json "):
+                            text = text[5:].strip()
 
-        # Extract JSON object
+        # Extract JSON object (find outermost braces)
+        # Use a simple counter to find matching braces
         start = text.find("{")
-        end = text.rfind("}")
-
-        if start == -1 or end == -1 or end <= start:
-            logger.error(f"Could not find JSON braces. Original text: {original_text[:500]}")
+        if start == -1:
+            # Try to find array start as well
+            start = text.find("[")
+            if start == -1:
+                logger.error(f"Could not find JSON opening brace/bracket. Text preview: {original_text[:1000]}")
+                raise JSONParsingError(
+                    f"No valid JSON object/array found in output. Preview: {original_text[:1000]}"
+                )
+        
+        # Find matching closing brace/bracket
+        brace_count = 0
+        bracket_count = 0
+        end = start
+        in_string = False
+        escape_next = False
+        
+        for i in range(start, len(text)):
+            char = text[i]
+            
+            # Handle string escaping
+            if escape_next:
+                escape_next = False
+                continue
+            
+            if char == "\\":
+                escape_next = True
+                continue
+            
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            
+            if in_string:
+                continue
+            
+            # Count braces and brackets
+            if char == "{":
+                brace_count += 1
+            elif char == "}":
+                brace_count -= 1
+            elif char == "[":
+                bracket_count += 1
+            elif char == "]":
+                bracket_count -= 1
+            
+            # If we found the outermost closing
+            if brace_count == 0 and bracket_count == 0:
+                end = i
+                break
+        
+        if brace_count != 0 or bracket_count != 0:
+            logger.error(f"Unmatched JSON braces/brackets. Preview: {original_text[:1000]}")
             raise JSONParsingError(
-                f"No valid JSON object found in output: {original_text[:500]}"
+                f"Invalid JSON structure. Preview: {original_text[:1000]}"
             )
 
-        return text[start : end + 1]
+        extracted = text[start : end + 1]
+        logger.debug(f"Extracted JSON length: {len(extracted)} chars")
+        return extracted
 
     def validate_schema(
         self, data: dict[str, Any], strict: bool = False

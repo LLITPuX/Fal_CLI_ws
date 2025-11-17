@@ -22,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.db.falkordb.client import FalkorDBClient
 from app.core.config import settings
+from app.services.rule_parser_service import RuleParserService
+from app.models.rule_schemas import RuleSchema
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -38,9 +40,12 @@ class KnowledgeBaseLoader:
         self._client_created_here = False  # Track if we created the client
         self.stats = {
             "documents_created": 0,
-            "chunks_created": 0,
+            "rules_created": 0,
+            "entities_created": 0,
+            "entity_rule_links_created": 0,
             "errors": []
         }
+        self.rule_parser = RuleParserService()
     
     async def load_all(self, force_reload: bool = False):
         """
@@ -153,13 +158,21 @@ class KnowledgeBaseLoader:
         """Check how many documents are in the Knowledge Base."""
         cypher = """
         MATCH (kb:KnowledgeBase {id: $kb_id})<-[:IN_BASE]-(d:Document)
-        RETURN count(d) as doc_count
+        OPTIONAL MATCH (d)-[:CONTAINS]->(r:Rule)
+        RETURN count(DISTINCT d) as doc_count, count(r) as rule_count
         """
         
         try:
             results, _ = await self.client.query(cypher, {"kb_id": self.kb_id})
-            doc_count = results[0].get("doc_count", 0) if results else 0
-            return doc_count
+            if results:
+                doc_count = results[0].get("doc_count", 0)
+                rule_count = results[0].get("rule_count", 0)
+                # If we have documents but no rules, they're old chunk-based
+                if doc_count > 0 and rule_count == 0:
+                    print(f"    [INFO] Found {doc_count} documents with old chunk structure")
+                    return 0  # Treat as empty for new structure
+                return doc_count
+            return 0
         except Exception as e:
             print(f"    [ERROR] Failed to check document count: {e}")
             return 0
@@ -199,8 +212,9 @@ class KnowledgeBaseLoader:
         cypher = """
         MATCH (kb:KnowledgeBase {id: $kb_id})
         OPTIONAL MATCH (kb)<-[:IN_BASE]-(d:Document)
-        OPTIONAL MATCH (d)<-[:PART_OF]-(c:Chunk)
-        DETACH DELETE kb, d, c
+        OPTIONAL MATCH (d)<-[:CONTAINS]-(r:Rule)
+        OPTIONAL MATCH (e:Entity)-[:HAS_RULE]->(r)
+        DETACH DELETE kb, d, r, e
         """
         
         try:
@@ -290,16 +304,29 @@ class KnowledgeBaseLoader:
             # Create Document node
             doc_id = await self._create_document_node(file_info, content)
             
-            # Chunk content
-            chunks = await self._chunk_content(content, file_info)
-            print(f"    Chunks: {len(chunks)}")
+            # Parse document into rules using LLM
+            print(f"    Parsing rules with LLM...")
+            rules = await self.rule_parser.parse_document_to_rules(
+                content, str(file_path)
+            )
+            print(f"    Rules extracted: {len(rules)}")
             
-            # Create Chunk nodes
-            for chunk_idx, chunk in enumerate(chunks):
-                await self._create_chunk_node(chunk, doc_id, chunk_idx)
+            # Create Rule nodes and entity links
+            for rule in rules:
+                rule_id = await self._create_rule_node(rule, doc_id, file_info)
+                
+                # Create/update Entity nodes and links
+                for entity_name in rule.entities:
+                    entity_id = await self._find_or_create_entity(entity_name)
+                    
+                    # Create links for each context
+                    for context in rule.contexts:
+                        await self._create_entity_rule_link(
+                            entity_id, rule_id, context, rule.priority
+                        )
             
             self.stats["documents_created"] += 1
-            self.stats["chunks_created"] += len(chunks)
+            self.stats["rules_created"] += len(rules)
             
             print(f"    [OK] Loaded successfully")
             
@@ -351,105 +378,152 @@ class KnowledgeBaseLoader:
         except Exception as e:
             raise Exception(f"Failed to create document node: {e}")
     
-    async def _chunk_content(self, content: str, file_info: Dict) -> List[Dict]:
-        """Chunk content into semantic chunks (simple paragraph-based)."""
-        chunks = []
-        
-        # Remove frontmatter
-        content_without_frontmatter = re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, flags=re.DOTALL)
-        
-        # Split by double newlines (paragraphs)
-        paragraphs = content_without_frontmatter.split('\n\n')
-        
-        current_chunk = ""
-        char_position = 0
-        chunk_idx = 0
-        
-        for para in paragraphs:
-            para = para.strip()
-            if not para:
-                continue
-            
-            # Determine chunk type
-            chunk_type = self._detect_chunk_type(para)
-            
-            # If adding this para exceeds limit, save current chunk
-            if current_chunk and len(current_chunk) + len(para) > 800:
-                chunks.append({
-                    "content": current_chunk.strip(),
-                    "position": chunk_idx,
-                    "char_start": char_position,
-                    "char_end": char_position + len(current_chunk),
-                    "chunk_type": chunk_type
-                })
-                char_position += len(current_chunk) + 2  # +2 for \n\n
-                chunk_idx += 1
-                current_chunk = ""
-            
-            current_chunk += para + "\n\n"
-        
-        # Add last chunk
-        if current_chunk.strip():
-            chunks.append({
-                "content": current_chunk.strip(),
-                "position": chunk_idx,
-                "char_start": char_position,
-                "char_end": char_position + len(current_chunk),
-                "chunk_type": self._detect_chunk_type(current_chunk)
-            })
-        
-        return chunks
-    
-    def _detect_chunk_type(self, text: str) -> str:
-        """Detect chunk type based on content."""
-        text_stripped = text.strip()
-        
-        if text_stripped.startswith('#'):
-            return "heading"
-        elif text_stripped.startswith('```'):
-            return "code"
-        elif text_stripped.startswith('-') or text_stripped.startswith('*'):
-            return "list"
-        elif len(text_stripped.split('\n')) == 1 and len(text_stripped) < 200:
-            return "sentence"
-        else:
-            return "paragraph"
-    
-    async def _create_chunk_node(self, chunk: Dict, doc_id: str, position: int):
-        """Create Chunk node in graph."""
-        chunk_id = f"chunk_{hashlib.sha256(chunk['content'].encode()).hexdigest()[:16]}"
-        
+    async def _create_rule_node(self, rule: RuleSchema, doc_id: str, file_info: Dict) -> str:
+        """Create Rule node in graph."""
         cypher = """
         MATCH (d:Document {id: $doc_id})
-        CREATE (c:Chunk {
-          id: $id,
-          content: $content,
-          position: $position,
-          char_start: $char_start,
-          char_end: $char_end,
-          chunk_type: $chunk_type,
-          status: 'pending_vectorization',
-          created_at: $timestamp
-        })
-        CREATE (c)-[:PART_OF {position: $position}]->(d)
-        RETURN c.id as id
+        MERGE (r:Rule {id: $id})
+        ON CREATE SET
+          r.title = $title,
+          r.content = $content,
+          r.rule_type = $rule_type,
+          r.priority = $priority,
+          r.source_section = $source_section,
+          r.code_examples = $code_examples,
+          r.contexts = $contexts,
+          r.status = 'active',
+          r.created_at = $timestamp
+        ON MATCH SET
+          r.title = $title,
+          r.content = $content,
+          r.rule_type = $rule_type,
+          r.priority = $priority,
+          r.source_section = $source_section,
+          r.code_examples = $code_examples,
+          r.contexts = $contexts
+        MERGE (d)-[:CONTAINS]->(r)
+        RETURN r.id as id
         """
         
         params = {
             "doc_id": doc_id,
-            "id": chunk_id,
-            "content": chunk["content"][:4000],  # Limit content length for FalkorDB
-            "position": chunk["position"],
-            "char_start": chunk["char_start"],
-            "char_end": chunk["char_end"],
-            "chunk_type": chunk["chunk_type"],
+            "id": rule.id,
+            "title": rule.title,
+            "content": rule.content[:8000],  # Limit for FalkorDB
+            "rule_type": rule.rule_type,
+            "priority": rule.priority,
+            "source_section": rule.source_section,
+            "code_examples": rule.code_examples[:5],  # Limit examples
+            "contexts": rule.contexts,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        try:
+            results, _ = await self.client.query(cypher, params)
+            return results[0]["id"] if results else rule.id
+        except Exception as e:
+            raise Exception(f"Failed to create rule node: {e}")
+    
+    async def _find_or_create_entity(self, entity_name: str) -> str:
+        """Find or create Entity node.
+        
+        Args:
+            entity_name: Name of the entity
+            
+        Returns:
+            Entity ID
+        """
+        # Normalize entity name
+        canonical_name = entity_name.lower().strip()
+        
+        cypher = """
+        MERGE (e:Entity {canonical_name: $canonical})
+        ON CREATE SET
+          e.id = $id,
+          e.name = $name,
+          e.canonical_name = $canonical,
+          e.type = 'CONCEPT',
+          e.mention_count = 1,
+          e.first_seen = $timestamp,
+          e.last_seen = $timestamp,
+          e.status = 'active'
+        ON MATCH SET
+          e.mention_count = e.mention_count + 1,
+          e.last_seen = $timestamp
+        RETURN e.id as id
+        """
+        
+        entity_id = f"entity_{hashlib.sha256(canonical_name.encode()).hexdigest()[:16]}"
+        
+        params = {
+            "id": entity_id,
+            "name": entity_name,
+            "canonical": canonical_name,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        try:
+            # Check if entity exists first
+            check_cypher = """
+            MATCH (e:Entity {canonical_name: $canonical})
+            RETURN e.id as id
+            """
+            check_results, _ = await self.client.query(check_cypher, {"canonical": canonical_name})
+            entity_exists = len(check_results) > 0
+            
+            # Create or update
+            results, _ = await self.client.query(cypher, params)
+            entity_id_result = results[0]["id"] if results else entity_id
+            
+            # Track if this is a new entity
+            if not entity_exists:
+                self.stats["entities_created"] += 1
+            
+            return entity_id_result
+        except Exception as e:
+            raise Exception(f"Failed to find/create entity: {e}")
+    
+    async def _create_entity_rule_link(
+        self, entity_id: str, rule_id: str, context: str, priority: str
+    ):
+        """Create HAS_RULE relationship between Entity and Rule.
+        
+        Args:
+            entity_id: Entity node ID
+            rule_id: Rule node ID
+            context: Context where rule applies (frontend, backend, etc.)
+            priority: Rule priority (high, medium, low)
+        """
+        cypher = """
+        MATCH (e:Entity {id: $entity_id})
+        MATCH (r:Rule {id: $rule_id})
+        MERGE (e)-[link:HAS_RULE {context: $context}]->(r)
+        ON CREATE SET
+          link.priority = $priority,
+          link.created_at = $timestamp,
+          link.relevance = CASE 
+            WHEN $priority = 'high' THEN 0.9
+            WHEN $priority = 'medium' THEN 0.7
+            ELSE 0.5
+          END
+        ON MATCH SET
+          link.priority = $priority
+        RETURN link
+        """
+        
+        params = {
+            "entity_id": entity_id,
+            "rule_id": rule_id,
+            "context": context,
+            "priority": priority,
             "timestamp": datetime.now().isoformat()
         }
         
         try:
             await self.client.query(cypher, params)
+            self.stats["entity_rule_links_created"] += 1
         except Exception as e:
-            raise Exception(f"Failed to create chunk node: {e}")
+            raise Exception(f"Failed to create entity-rule link: {e}")
     
     def _print_summary(self):
         """Print loading summary."""
@@ -459,7 +533,9 @@ class KnowledgeBaseLoader:
         
         print(f"[*] Statistics:")
         print(f"    Documents created: {self.stats['documents_created']}")
-        print(f"    Chunks created: {self.stats['chunks_created']}")
+        print(f"    Rules created: {self.stats['rules_created']}")
+        print(f"    Entities created: {self.stats['entities_created']}")
+        print(f"    Entity-Rule links: {self.stats['entity_rule_links_created']}")
         print(f"    Errors: {len(self.stats['errors'])}")
         
         if self.stats["errors"]:
@@ -471,11 +547,10 @@ class KnowledgeBaseLoader:
         
         if len(self.stats["errors"]) == 0:
             print("\n[SUCCESS] All files loaded successfully!")
-            print("\n[*] Next steps:")
-            print("    1. Async workers will process chunks (vectorization)")
-            print("    2. Entity extraction will run")
-            print("    3. Similarity links will be created")
-            print("    4. Expected completion: ~10 minutes")
+            print("\n[*] Knowledge Base structure:")
+            print("    - Rules are linked to Documents")
+            print("    - Entities are linked to Rules with contexts")
+            print("    - Ready for querying: MATCH (e:Entity)-[:HAS_RULE]->(r:Rule)")
         else:
             print("\n[WARNING] Some files failed to load. Review errors above.")
 
