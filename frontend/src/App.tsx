@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-route
 import { GeminiPage } from './pages/GeminiPage';
 import GraphVisualizationPage from './pages/GraphVisualizationPage';
 import ChatPage from './pages/ChatPage';
+import DocumentArchiverPage from './pages/DocumentArchiverPage';
 import './styles/App.css';
 import './styles/globals.css';
 
@@ -12,9 +13,11 @@ function AppContent() {
   return (
     <div className="app">
       <Routes>
-        <Route path="/" element={<GeminiPage />} />
+        <Route path="/" element={<DocumentArchiverPage />} />
+        <Route path="/gemini" element={<GeminiPage />} />
         <Route path="/falkordb" element={<GraphVisualizationPage />} />
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/archive" element={<DocumentArchiverPage />} />
       </Routes>
 
       {!isChatPage && (

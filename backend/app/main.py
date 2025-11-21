@@ -17,6 +17,7 @@ from app.agents.cursor.nodes import cursor_record_node
 from app.agents.graph import init_chat_workflow
 from app.agents.subconscious.repository import SubconsciousRepository
 from app.api import router
+from app.api.archive_routes import router as archive_router
 from app.api.chat_routes import router as chat_router
 from app.api.cursor_routes import router as cursor_router
 from app.api.falkordb_routes import router as falkordb_router
@@ -297,10 +298,12 @@ async def lifespan(app: FastAPI):
         
         # Auto-load rules if Knowledge Base is empty (async, non-blocking)
         # Run in background to avoid blocking startup
-        asyncio.create_task(_auto_load_rules_if_needed(client))
+        # DISABLED: Auto-load rules
+        # asyncio.create_task(_auto_load_rules_if_needed(client))
         
         # Auto-index codebase if not already indexed (async, non-blocking)
-        asyncio.create_task(_auto_index_codebase_if_needed(client))
+        # DISABLED: Auto-index codebase
+        # asyncio.create_task(_auto_index_codebase_if_needed(client))
         
         # Load default templates
         await load_default_templates(client)
@@ -386,6 +389,7 @@ async def cursor_recording_middleware(request: Request, call_next):
 
 # Include routers
 app.include_router(router, tags=["gemini"])
+app.include_router(archive_router, prefix="/api")  # Document archiver system
 app.include_router(falkordb_router, prefix="/api")
 app.include_router(template_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")  # Cybersich chat system
