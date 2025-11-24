@@ -1,8 +1,8 @@
 # Cursor Agent Implementation - Phase 1 Complete ✅
 
 **Date:** November 12, 2025  
-**Status:** Production Ready  
-**Version:** 1.0.0
+**Status:** Production Ready (Phase 2 Partial)  
+**Version:** 1.1.0
 
 ---
 
@@ -226,7 +226,7 @@ Updated [backend/app/main.py](backend/app/main.py):
 
 ---
 
-## Known Limitations (Phase 1)
+## Known Limitations (Phase 1 + Phase 2 Partial)
 
 ### 1. Iframe Blocked
 
@@ -235,12 +235,12 @@ Updated [backend/app/main.py](backend/app/main.py):
 **Workaround:** Open http://localhost:3001 directly in new tab  
 **Fix (Phase 2):** Add "Open in New Window" button or reverse proxy
 
-### 2. Manual Recording
+### 2. Auto-Recording Middleware (✅ Phase 2 Partial)
 
-**Issue:** `cursor_record_node()` created but not auto-triggered yet  
-**Impact:** Need to call API manually to record interactions  
-**Workaround:** Use API endpoints  
-**Fix (Phase 2):** Add middleware to auto-record every request
+**Status:** Basic logging middleware implemented (lines 347-388 in main.py)  
+**Current:** Logs API calls with execution time  
+**Next:** Extract request/response data and call `cursor_record_node()` automatically  
+**Note:** `cursor_auto_record: bool = True` in config, but full extraction pending
 
 ### 3. Graph Selector
 
@@ -325,14 +325,15 @@ Backup saved to: `backups/cursor_memory/exports/sessions/{session_id}.json`
 
 ---
 
-## Next Steps (Phase 2)
+## Next Steps (Phase 2/3)
 
 ### Cursor Agent Improvements
 
-1. **Auto-Recording Middleware**
-   - Automatically record every Cursor interaction
-   - No manual API calls needed
-   - Track all tools and file changes
+1. **Auto-Recording Middleware** (🔄 In Progress)
+   - ✅ Basic logging middleware implemented
+   - ⏳ Extract request/response data automatically
+   - ⏳ Call `cursor_record_node()` with full context
+   - ⏳ Track all tools and file changes
 
 2. **Semantic Search**
    - Add embeddings to UserQuery nodes
@@ -510,9 +511,11 @@ curl http://localhost:8000/api/cursor/sessions
 
 ## Roadmap
 
-### Phase 2 (Next)
+### Phase 2 (In Progress)
 
-- [ ] Auto-recording middleware for every Cursor interaction
+- [x] Basic logging middleware (partial)
+- [ ] Full request/response extraction
+- [ ] Automatic `cursor_record_node()` calls
 - [ ] Graph selector UI component
 - [ ] Semantic search through embeddings
 - [ ] Architectural decision extraction
@@ -529,10 +532,15 @@ curl http://localhost:8000/api/cursor/sessions
 
 ---
 
-**Implementation Time:** ~2 hours  
+**Implementation Time:** ~2 hours (Phase 1) + ~1 hour (Phase 2 partial)  
 **Lines of Code:** ~1500 (backend + frontend + docs)  
 **Complexity:** Medium-High  
-**Quality:** Production Ready
+**Quality:** Production Ready (Phase 1), Partial (Phase 2)
+
+**Update (Nov 12, 2025):**
+- ✅ Auto-recording middleware added (basic logging)
+- ⏳ Full request/response extraction pending
+- ✅ Middleware gracefully handles errors (never fails main request)
 
 ---
 
