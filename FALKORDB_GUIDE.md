@@ -25,7 +25,7 @@ backend/app/
 ```
 frontend/src/
 ├── pages/
-│   └── FalkorDBPage.tsx           # Головна сторінка FalkorDB
+│   └── GraphVisualizationPage.tsx       # Головна сторінка FalkorDB
 ├── components/falkordb/
 │   ├── NodeTemplateForm.tsx       # Форма створення вузлів через шаблони
 │   ├── TemplateManager.tsx        # Управління шаблонами вузлів

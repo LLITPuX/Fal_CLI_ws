@@ -35,6 +35,7 @@ export default function DocumentArchiverPage() {
   const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
   const [previewMode, setPreviewMode] = useState<'graph' | 'json'>('graph');
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingTypes, setIsLoadingTypes] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -53,35 +54,144 @@ export default function DocumentArchiverPage() {
 
   const loadDocumentTypes = async () => {
     try {
+      setIsLoadingTypes(true);
+      setError(null);
       const response = await archiveApi.getDocumentTypes();
-      setDocumentTypes(response.document_types);
-
-      // Auto-select first type if available
-      if (response.document_types.length > 0 && !selectedDocType) {
-        setSelectedDocType(response.document_types[0]);
+      
+      if (response.document_types && response.document_types.length > 0) {
+        setDocumentTypes(response.document_types);
+        if (!selectedDocType) {
+          setSelectedDocType(response.document_types[0]);
+        } else {
+          // Try to find matching type by extension
+          const matchingApiType = response.document_types.find(
+            (dt) => dt.file_extension === selectedDocType.file_extension
+          );
+          if (matchingApiType) {
+            setSelectedDocType(matchingApiType);
+          } else {
+            setSelectedDocType(response.document_types[0]);
+          }
+        }
+      } else {
+        setDocumentTypes([]);
+        setSelectedDocType(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Помилка завантаження типів документів');
+      setDocumentTypes([]);
+      setSelectedDocType(null);
+      console.error('Failed to load document types:', err);
+    } finally {
+      setIsLoadingTypes(false);
+    }
+  };
+
+  const handleInitDocumentTypes = async () => {
+    try {
+      setIsLoadingTypes(true);
+      setError(null);
+      
+      const response = await archiveApi.initDocumentTypes();
+      
+      if (response.document_types && response.document_types.length > 0) {
+        setDocumentTypes(response.document_types);
+        setSelectedDocType(response.document_types[0]);
+        setError(null);
+      } else {
+        setError('Не вдалося створити типи документів');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Помилка ініціалізації типів документів';
+      setError(errorMessage);
+      console.error('Failed to initialize document types:', err);
+    } finally {
+      setIsLoadingTypes(false);
     }
   };
 
   const loadSchemaAndPrompt = async () => {
     if (!selectedDocType) return;
 
+    // Check if this is a static type (has empty prompt_id or node_schemas)
+    const isStaticType = !selectedDocType.prompt_id || Object.keys(selectedDocType.node_schemas).length === 0;
+    
+    if (isStaticType) {
+      // For static types, try to find matching type from API by extension
+      try {
+        const apiResponse = await archiveApi.getDocumentTypes();
+        if (apiResponse.document_types && apiResponse.document_types.length > 0) {
+          const matchingApiType = apiResponse.document_types.find(
+            (dt) => dt.file_extension === selectedDocType.file_extension
+          );
+          
+          if (matchingApiType && matchingApiType.prompt_id && Object.keys(matchingApiType.node_schemas).length > 0) {
+            // Use API type for loading schemas
+            try {
+              setIsLoading(true);
+              setError(null);
+
+              // Get first available schema label from node_schemas
+              const schemaLabels = Object.keys(matchingApiType.node_schemas);
+              if (schemaLabels.length === 0) {
+                throw new Error('No schemas found for this document type');
+              }
+
+              // Use first schema (or prefer "Rule" if available)
+              const schemaLabel = schemaLabels.includes('Rule') ? 'Rule' : schemaLabels[0];
+
+              // Load schema
+              const schema = await archiveApi.getSchemasForType(matchingApiType.id, schemaLabel);
+              setCurrentSchema(schema);
+
+              // Load prompt
+              const prompt = await archiveApi.getPrompt(matchingApiType.prompt_id);
+              setCurrentPrompt(prompt);
+            } catch (err) {
+              console.warn('Failed to load schema/prompt for matching API type:', err);
+              setCurrentSchema(null);
+              setCurrentPrompt(null);
+            } finally {
+              setIsLoading(false);
+            }
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to check API types:', err);
+      }
+      
+      // No matching API type found, clear schemas
+      setCurrentSchema(null);
+      setCurrentPrompt(null);
+      return;
+    }
+
+    // For API types, load schemas normally
     try {
       setIsLoading(true);
       setError(null);
 
-      // Load Rule schema (default)
-      const schema = await archiveApi.getSchemasForType(selectedDocType.id, 'Rule');
+      // Get first available schema label from node_schemas
+      const schemaLabels = Object.keys(selectedDocType.node_schemas);
+      if (schemaLabels.length === 0) {
+        throw new Error('No schemas found for this document type');
+      }
+
+      // Use first schema (or prefer "Rule" if available)
+      const schemaLabel = schemaLabels.includes('Rule') ? 'Rule' : schemaLabels[0];
+
+      // Load schema
+      const schema = await archiveApi.getSchemasForType(selectedDocType.id, schemaLabel);
       setCurrentSchema(schema);
 
       // Load prompt
       const prompt = await archiveApi.getPrompt(selectedDocType.prompt_id);
       setCurrentPrompt(prompt);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Помилка завантаження схеми або промпту');
       console.error('Failed to load schema/prompt:', err);
+      setError(err instanceof Error ? err.message : 'Помилка завантаження схеми або промпту');
+      setCurrentSchema(null);
+      setCurrentPrompt(null);
     } finally {
       setIsLoading(false);
     }
@@ -121,6 +231,31 @@ export default function DocumentArchiverPage() {
       });
   };
 
+  const getApiDocumentType = async (docType: DocumentType): Promise<DocumentType> => {
+    // If type has prompt_id, it's from API, use it directly
+    if (docType.prompt_id && Object.keys(docType.node_schemas).length > 0) {
+      return docType;
+    }
+    
+    // Otherwise, try to find matching type from API
+    try {
+      const response = await archiveApi.getDocumentTypes();
+      if (response.document_types && response.document_types.length > 0) {
+        const matchingApiType = response.document_types.find(
+          (dt) => dt.file_extension === docType.file_extension
+        );
+        if (matchingApiType) {
+          return matchingApiType;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to get API document types:', err);
+    }
+    
+    // Return original type if no match found
+    return docType;
+  };
+
   const handlePreview = async () => {
     if (!selectedDocType || !documentContent.trim()) {
       setError('Оберіть тип документа та введіть контент');
@@ -131,11 +266,37 @@ export default function DocumentArchiverPage() {
       setIsLoading(true);
       setError(null);
 
+      // Get API document type if needed
+      const apiDocType = await getApiDocumentType(selectedDocType);
+      
+      // Load schema and prompt if not already loaded
+      let schemaId = currentSchema?.id || null;
+      let promptId = currentPrompt?.id || null;
+      
+      if (!schemaId || !promptId) {
+        if (apiDocType.prompt_id && Object.keys(apiDocType.node_schemas).length > 0) {
+          try {
+            // Get first available schema label
+            const schemaLabels = Object.keys(apiDocType.node_schemas);
+            const schemaLabel = schemaLabels.includes('Rule') ? 'Rule' : schemaLabels[0];
+            
+            const schema = await archiveApi.getSchemasForType(apiDocType.id, schemaLabel);
+            const prompt = await archiveApi.getPrompt(apiDocType.prompt_id);
+            schemaId = schema.id;
+            promptId = prompt.id;
+            setCurrentSchema(schema);
+            setCurrentPrompt(prompt);
+          } catch (err) {
+            console.warn('Failed to load schema/prompt:', err);
+          }
+        }
+      }
+
       const response = await archiveApi.previewArchive({
         content: documentContent,
-        document_type: selectedDocType.id,
-        schema_id: currentSchema?.id || null,
-        prompt_id: currentPrompt?.id || null,
+        document_type: apiDocType.id,
+        schema_id: schemaId,
+        prompt_id: promptId,
       });
 
       setPreviewData(response);
@@ -161,12 +322,38 @@ export default function DocumentArchiverPage() {
       setIsSaving(true);
       setError(null);
 
+      // Get API document type if needed
+      const apiDocType = await getApiDocumentType(selectedDocType);
+      
+      // Load schema and prompt if not already loaded
+      let schemaId = currentSchema?.id || null;
+      let promptId = currentPrompt?.id || null;
+      
+      if (!schemaId || !promptId) {
+        if (apiDocType.prompt_id && Object.keys(apiDocType.node_schemas).length > 0) {
+          try {
+            // Get first available schema label
+            const schemaLabels = Object.keys(apiDocType.node_schemas);
+            const schemaLabel = schemaLabels.includes('Rule') ? 'Rule' : schemaLabels[0];
+            
+            const schema = await archiveApi.getSchemasForType(apiDocType.id, schemaLabel);
+            const prompt = await archiveApi.getPrompt(apiDocType.prompt_id);
+            schemaId = schema.id;
+            promptId = prompt.id;
+            setCurrentSchema(schema);
+            setCurrentPrompt(prompt);
+          } catch (err) {
+            console.warn('Failed to load schema/prompt:', err);
+          }
+        }
+      }
+
       const response: ArchiveResponse = await archiveApi.archiveDocument({
         content: documentContent,
         file_path: filePath || 'unknown',
-        document_type: selectedDocType.id,
-        schema_id: currentSchema?.id || null,
-        prompt_id: currentPrompt?.id || null,
+        document_type: apiDocType.id,
+        schema_id: schemaId,
+        prompt_id: promptId,
       });
 
       alert(
@@ -249,24 +436,55 @@ export default function DocumentArchiverPage() {
                 {/* Document type selector */}
                 <div className="space-y-2">
                   <Label htmlFor="doc-type">Тип документа</Label>
-                  <Select
-                    value={selectedDocType?.id || ''}
-                    onValueChange={(value) => {
-                      const type = documentTypes.find((dt) => dt.id === value);
-                      setSelectedDocType(type || null);
-                    }}
-                  >
-                    <SelectTrigger id="doc-type">
-                      <SelectValue placeholder="Оберіть тип..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {documentTypes.map((dt) => (
-                        <SelectItem key={dt.id} value={dt.id}>
-                          {dt.name} ({dt.file_extension})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {isLoadingTypes ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Завантаження типів...
+                    </div>
+                  ) : documentTypes.length === 0 ? (
+                    <div className="space-y-2">
+                      <div className="text-sm text-muted-foreground p-3 border border-dashed rounded bg-muted/50">
+                        <p className="mb-2">Типи документів не знайдено.</p>
+                        <p className="text-xs">Натисніть кнопку нижче для створення дефолтних типів.</p>
+                      </div>
+                      <Button
+                        onClick={handleInitDocumentTypes}
+                        disabled={isLoadingTypes}
+                        className="w-full"
+                      >
+                        {isLoadingTypes ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Створення...
+                          </>
+                        ) : (
+                          <>
+                            <FileText className="w-4 h-4 mr-2" />
+                            Створити дефолтні типи
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  ) : (
+                    <Select
+                      value={selectedDocType?.id || ''}
+                      onValueChange={(value) => {
+                        const type = documentTypes.find((dt) => dt.id === value);
+                        setSelectedDocType(type || null);
+                      }}
+                    >
+                      <SelectTrigger id="doc-type">
+                        <SelectValue placeholder="Оберіть тип..." />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white text-foreground shadow-lg border border-border">
+                        {documentTypes.map((dt) => (
+                          <SelectItem key={dt.id} value={dt.id}>
+                            {dt.name} ({dt.file_extension})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
 
                 {/* File upload */}

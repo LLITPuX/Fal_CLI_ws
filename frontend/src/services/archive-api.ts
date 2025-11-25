@@ -79,6 +79,12 @@ export class ArchiveApiClient {
     return this.fetchJson<DocumentTypeListResponse>('/archive/document-types');
   }
 
+  async initDocumentTypes(): Promise<DocumentTypeListResponse> {
+    return this.fetchJson<DocumentTypeListResponse>('/archive/document-types/init', {
+      method: 'POST',
+    });
+  }
+
   async getDocumentType(typeId: string): Promise<DocumentType> {
     const response = await this.fetchJson<DocumentTypeResponse>(
       `/archive/document-types/${typeId}`

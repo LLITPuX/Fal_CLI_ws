@@ -104,7 +104,7 @@
 - ✅ Підтвердження видалення та міграції
 - ✅ Повідомлення про успіх/помилки
 
-#### 13. Інтеграція в FalkorDBPage
+#### 13. Інтеграція в GraphVisualizationPage
 - ✅ Новий таб "📋 Templates"
 - ✅ NodeTemplateForm замість NodeForm у таб "Node"
 - ✅ Адаптивний layout (Templates на всю ширину)
@@ -269,7 +269,7 @@ frontend/src/
 │   ├── TemplateEditor.tsx               # Template editor modal
 │   └── TemplateManager.tsx              # Template management
 ├── pages/
-│   └── FalkorDBPage.tsx                 # Main page (updated)
+│   └── GraphVisualizationPage.tsx       # Main page (updated)
 └── styles/
     ├── TemplateFields.css
     ├── TemplateEditor.css

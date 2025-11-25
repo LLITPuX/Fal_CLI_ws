@@ -24,6 +24,7 @@ from app.models.archive_schemas import (
     SchemaVersionsResponse,
 )
 from app.services.document_archiver_service import DocumentArchiverService
+from app.services.document_type_loader import init_default_document_types
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,47 @@ async def get_document_types(
         return await service.get_all_document_types()
     except Exception as e:
         logger.error(f"Failed to get document types: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@router.post(
+    "/document-types/init",
+    response_model=DocumentTypeListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Initialize default document types",
+    description="Create default document types (.md, .mdc, .txt) with their schemas and prompts",
+)
+async def init_document_types(
+    service: DocumentArchiverServiceDep,
+    client: Annotated[FalkorDBClient, Depends(get_falkordb_client)],
+) -> DocumentTypeListResponse:
+    """Initialize default document types.
+
+    Args:
+        service: DocumentArchiverService instance
+        client: FalkorDB client instance
+
+    Returns:
+        List of all document types (including newly created ones)
+
+    Raises:
+        HTTPException: If initialization fails
+    """
+    try:
+        result = await init_default_document_types(client)
+        
+        logger.info(
+            f"Document types initialization: {result['created']} created, "
+            f"{result['skipped']} skipped, {result['errors']} errors"
+        )
+        
+        # Return updated list of document types
+        return await service.get_all_document_types()
+    except Exception as e:
+        logger.error(f"Failed to initialize document types: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),

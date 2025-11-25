@@ -25,6 +25,7 @@ from app.api.template_routes import router as template_router
 from app.core.config import settings
 from app.db.falkordb.client import close_falkordb_client, init_falkordb_client, get_falkordb_client
 from app.services.template_loader import load_default_templates
+from app.services.document_type_loader import load_default_document_types
 
 # Configure logging
 logging.basicConfig(
@@ -307,6 +308,9 @@ async def lifespan(app: FastAPI):
         
         # Load default templates
         await load_default_templates(client)
+        
+        # Initialize default document types
+        await load_default_document_types(client)
         
         # Initialize LangGraph workflow for chat agents
         clerk_repo = MessageRepository(client)
